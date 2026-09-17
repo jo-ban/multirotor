@@ -1,3 +1,4 @@
+import argparse
 from pathlib import Path
 
 import matplotlib.pyplot as plt
@@ -17,8 +18,8 @@ from normalization import dimensional_velocity
 MODEL_PATHS = {c: Path(f"rotor_unet_cyl2d_{c}.pth") for c in ("u", "v", "w")}
 
 
-def load_component_model(component, device):
-    path = MODEL_PATHS[component]
+def load_component_model(component, device, model_dir=None):
+    path = MODEL_PATHS[component] if model_dir is None else Path(model_dir) / f"rotor_unet_cyl2d_{component}.pth"
     if not path.exists():
         raise FileNotFoundError(f"{path}가 없습니다. train_nd.py로 먼저 학습하세요.")
     checkpoint = torch.load(path, map_location=device)
@@ -41,6 +42,8 @@ def predict_cylindrical_surface(
     shape_ztheta=DEFAULT_SHAPE_ZTHETA,
     save_path="prediction_cylinder_r2RD.npz",
     show_plot=True,
+    model_dir=None,
+    plot_path=None,
 ):
     """L과 D로 외접반경 R_D를 계산하고 r=2R_D 원통면의 U/V/W를 예측한다."""
     l_over_d = float(rotor_spacing_m) / float(rotor_diameter_m)
@@ -56,7 +59,7 @@ def predict_cylindrical_surface(
     prediction_nd = {}
     with torch.no_grad():
         for component in ("u", "v", "w"):
-            model, scale = load_component_model(component, device)
+            model, scale = load_component_model(component, device, model_dir)
             prediction_nd[component] = (
                 model(inputs)[0, 0].cpu().numpy() / scale
             ).astype(np.float32)
@@ -84,6 +87,7 @@ def predict_cylindrical_surface(
     radial = prediction["u"] * cos_theta + prediction["v"] * sin_theta
     tangential = -prediction["u"] * sin_theta + prediction["v"] * cos_theta
 
+    Path(save_path).parent.mkdir(parents=True, exist_ok=True)
     np.savez_compressed(
         save_path,
         u_mps=prediction["u"],
@@ -108,7 +112,7 @@ def predict_cylindrical_surface(
     )
     print(f"r=2R_D 원통 표면 예측 결과 저장: {save_path}")
 
-    if show_plot:
+    if show_plot or plot_path is not None:
         extent = (0.0, 360.0, 0.0, height_over_rd)
         fig, axes = plt.subplots(2, 2, figsize=(13, 8))
         for ax, data, title in zip(
@@ -123,17 +127,36 @@ def predict_cylindrical_surface(
             fig.colorbar(image, ax=ax, label="m/s")
         plt.suptitle(f"Cylinder r=2R_D prediction | L/D={l_over_d:.3f}")
         plt.tight_layout()
-        plt.show()
+        if plot_path is not None:
+            Path(plot_path).parent.mkdir(parents=True, exist_ok=True)
+            fig.savefig(plot_path, dpi=150)
+        if show_plot:
+            plt.show()
+        plt.close(fig)
 
     return prediction["u"], prediction["v"], prediction["w"]
 
 
 if __name__ == "__main__":
+    parser = argparse.ArgumentParser(description="Predict a cylindrical velocity field")
+    parser.add_argument("--model-dir", type=Path, default=Path("."))
+    parser.add_argument("--output", type=Path, default=Path("prediction_cylinder_r2RD.npz"))
+    parser.add_argument("--rotor-spacing", type=float, default=1.25)
+    parser.add_argument("--rotor-diameter", type=float, default=1.0)
+    parser.add_argument("--disk-loading", type=float, default=153.22)
+    parser.add_argument("--rotor-z", type=float, default=2.0)
+    parser.add_argument("--ground-z", type=float, default=0.0)
+    parser.add_argument("--no-show", action="store_true")
+    args = parser.parse_args()
     predict_cylindrical_surface(
-        rotor_spacing_m=1.25,
-        rotor_diameter_m=1.0,
-        disk_loading=153.22,
-        rotor_z_m=2.0,
-        ground_z_m=0.0,
+        rotor_spacing_m=args.rotor_spacing,
+        rotor_diameter_m=args.rotor_diameter,
+        disk_loading=args.disk_loading,
+        rotor_z_m=args.rotor_z,
+        ground_z_m=args.ground_z,
         shape_ztheta=(256, 256),
+        save_path=args.output,
+        model_dir=args.model_dir,
+        show_plot=not args.no_show,
+        plot_path=args.output.with_suffix(".png"),
     )

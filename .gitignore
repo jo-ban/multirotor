@@ -1,0 +1,7 @@
+__pycache__/
+*.pyc
+.venv/
+dataset_nd/
+*.pth
+*.npy
+*.npz

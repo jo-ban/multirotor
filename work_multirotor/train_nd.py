@@ -1,3 +1,4 @@
+import argparse
 from pathlib import Path
 
 import numpy as np
@@ -91,11 +92,16 @@ def save_checkpoint(model, path, component):
     )
 
 
-def train_one_component(component, device):
-    dataset = CylindricalSurfaceDataset(DATA_ROOT, component)
+def train_one_component(component, device, data_root=DATA_ROOT, csv_path=CSV_PATH,
+                        model_dir=Path("."), epochs=NUM_EPOCHS, batch_size=BATCH_SIZE):
+    if not Path(csv_path).is_file():
+        raise FileNotFoundError(f"CSV not found: {csv_path}")
+    if epochs < 1 or batch_size < 1:
+        raise ValueError("epochs and batch_size must be positive")
+    dataset = CylindricalSurfaceDataset(data_root, component, csv_path)
     loader = DataLoader(
         dataset,
-        batch_size=BATCH_SIZE,
+        batch_size=batch_size,
         shuffle=True,
         num_workers=0,
         pin_memory=torch.cuda.is_available(),
@@ -107,7 +113,7 @@ def train_one_component(component, device):
     optimizer = optim.Adam(model.parameters(), lr=LEARNING_RATE)
 
     print(f"\n===== {component.upper()} 전용 원통표면 2D U-Net 학습 시작 =====")
-    for epoch in range(NUM_EPOCHS):
+    for epoch in range(epochs):
         model.train()
         total_loss = 0.0
         for inputs, targets in loader:
@@ -121,16 +127,25 @@ def train_one_component(component, device):
             total_loss += loss.item() * inputs.size(0)
 
         mean_loss = total_loss / len(dataset)
-        print(f"[{component.upper()}] Epoch {epoch + 1:03d}/{NUM_EPOCHS} | MAE loss={mean_loss:.6f}")
+        print(f"[{component.upper()}] Epoch {epoch + 1:03d}/{epochs} | MAE loss={mean_loss:.6f}")
 
-    model_path = Path(f"rotor_unet_cyl2d_{component}.pth")
+    Path(model_dir).mkdir(parents=True, exist_ok=True)
+    model_path = Path(model_dir) / f"rotor_unet_cyl2d_{component}.pth"
     save_checkpoint(model, model_path, component)
     print(f"  저장: {model_path}")
 
 
 if __name__ == "__main__":
+    parser = argparse.ArgumentParser(description="Train U/V/W models")
+    parser.add_argument("--data-root", type=Path, default=DATA_ROOT)
+    parser.add_argument("--csv", type=Path, default=CSV_PATH)
+    parser.add_argument("--model-dir", type=Path, default=Path("."))
+    parser.add_argument("--epochs", type=int, default=NUM_EPOCHS)
+    parser.add_argument("--batch-size", type=int, default=BATCH_SIZE)
+    args = parser.parse_args()
     device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
     print(f"device: {device}")
     for velocity_component in COMPONENTS:
-        train_one_component(velocity_component, device)
+        train_one_component(velocity_component, device, args.data_root, args.csv,
+                            args.model_dir, args.epochs, args.batch_size)
     print("\n전체 완료: rotor_unet_cyl2d_u/v/w.pth")

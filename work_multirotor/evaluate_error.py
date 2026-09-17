@@ -1,3 +1,4 @@
+import argparse
 from pathlib import Path
 
 import matplotlib.pyplot as plt
@@ -37,8 +38,9 @@ def validation_case_ids(csv_path="./cases.csv"):
     ]
 
 
-def load_model(component, device):
-    checkpoint = torch.load(MODEL_PATHS[component], map_location=device)
+def load_model(component, device, model_dir=None):
+    path = MODEL_PATHS[component] if model_dir is None else Path(model_dir) / f"rotor_unet_cyl2d_{component}.pth"
+    checkpoint = torch.load(path, map_location=device)
     model = CylindricalUNet2D(
         in_channels=int(checkpoint.get("in_channels", 5)),
         out_channels=1,
@@ -49,21 +51,22 @@ def load_model(component, device):
     return model, float(checkpoint.get("target_scale", TARGET_SCALE))
 
 
-def evaluate_case(case_id, device, show_plot=True):
-    meta = load_case_input(DATA_ROOT / "inputs" / f"input_{case_id}.npz")
+def evaluate_case(case_id, device, show_plot=True, data_root=DATA_ROOT, model_dir=None, output_dir=None):
+    data_root = Path(data_root)
+    meta = load_case_input(data_root / "inputs" / f"input_{case_id}.npz")
     input_array = make_input_surface(
         meta["l_over_d"], meta["height_over_rd"], meta["shape_ztheta"]
     )
     inputs = torch.from_numpy(input_array[None, ...]).to(device)
     cfd_nd = {
-        c: np.load(DATA_ROOT / f"targets_{c}" / f"{c}_{case_id}.npy")
+        c: np.load(data_root / f"targets_{c}" / f"{c}_{case_id}.npy")
         for c in ("u", "v", "w")
     }
 
     ai_nd = {}
     with torch.no_grad():
         for component in ("u", "v", "w"):
-            model, scale = load_model(component, device)
+            model, scale = load_model(component, device, model_dir)
             ai_nd[component] = model(inputs)[0, 0].cpu().numpy() / scale
             del model
             if torch.cuda.is_available():
@@ -83,7 +86,7 @@ def evaluate_case(case_id, device, show_plot=True):
         f"W MAE={maes['w']:.5f} | |V| MAE={magnitude_mae:.5f} m/s"
     )
 
-    if show_plot:
+    if show_plot or output_dir is not None:
         extent = (0.0, 360.0, 0.0, meta["height_over_rd"])
         fig, axes = plt.subplots(1, 3, figsize=(16, 4.5))
         for ax, data, title in zip(
@@ -98,7 +101,12 @@ def evaluate_case(case_id, device, show_plot=True):
             fig.colorbar(image, ax=ax, label="m/s")
         plt.suptitle(f"{case_id} | cylinder r=2R_D | magnitude MAE={magnitude_mae:.5f} m/s")
         plt.tight_layout()
-        plt.show()
+        if output_dir is not None:
+            Path(output_dir).mkdir(parents=True, exist_ok=True)
+            fig.savefig(Path(output_dir) / f"error_{case_id}.png", dpi=150)
+        if show_plot:
+            plt.show()
+        plt.close(fig)
 
     return {
         "case_id": case_id,
@@ -108,10 +116,20 @@ def evaluate_case(case_id, device, show_plot=True):
 
 
 if __name__ == "__main__":
+    parser = argparse.ArgumentParser(description="Evaluate validation cases")
+    parser.add_argument("--csv", type=Path, default=Path("cases.csv"))
+    parser.add_argument("--data-root", type=Path, default=DATA_ROOT)
+    parser.add_argument("--model-dir", type=Path, default=Path("."))
+    parser.add_argument("--output-dir", type=Path, default=Path("."))
+    parser.add_argument("--no-show", action="store_true")
+    args = parser.parse_args()
     device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
-    case_ids = validation_case_ids("./cases.csv")
+    case_ids = validation_case_ids(args.csv)
     if not case_ids:
         raise RuntimeError("cases.csv에서 type='V' 검증 케이스를 찾지 못했습니다.")
-    results = [evaluate_case(case_id, device, show_plot=True) for case_id in case_ids]
-    pd.DataFrame(results).to_csv("validation_errors_cyl2rd.csv", index=False)
-    print("검증 결과 저장: validation_errors_cyl2rd.csv")
+    results = [evaluate_case(case_id, device, show_plot=not args.no_show,
+                             data_root=args.data_root, model_dir=args.model_dir,
+                             output_dir=args.output_dir) for case_id in case_ids]
+    output = args.output_dir / "validation_errors_cyl2rd.csv"
+    pd.DataFrame(results).to_csv(output, index=False)
+    print(f"검증 결과 저장: {output}")

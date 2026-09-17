@@ -1,4 +1,5 @@
-from pathlib import Path
+import argparse
+from pathlib import Path, PureWindowsPath
 
 import numpy as np
 import pandas as pd
@@ -132,22 +133,39 @@ def extract_velocity_case(
     )
 
 
-if __name__ == "__main__":
-    csv_path = Path("./cases.csv")
+def main():
+    parser = argparse.ArgumentParser(description="Extract and nondimensionalize OpenFOAM velocity fields")
+    parser.add_argument("--csv", type=Path, default=Path("cases.csv"))
+    parser.add_argument("--data-root", type=Path, help="Root for relative CSV folder values (default: CSV directory)")
+    parser.add_argument("--output-root", type=Path, default=Path("dataset_nd"))
+    args = parser.parse_args()
+    csv_path = args.csv.expanduser().resolve()
+    data_root = args.data_root.expanduser().resolve() if args.data_root else csv_path.parent
     if not csv_path.exists():
         raise FileNotFoundError("cases.csv 파일이 없습니다.")
 
-    dataframe = pd.read_csv(csv_path)
+    dataframe = pd.read_csv(csv_path, dtype={"folder": str})
     if "folder" not in dataframe.columns:
         raise KeyError("cases.csv에 folder 열이 필요합니다.")
 
+    if dataframe.empty:
+        raise ValueError("CSV contains no cases")
+    failures = []
     for _, row in dataframe.iterrows():
         try:
+            folder = _folder_name(row["folder"]).strip()
+            if not folder or pd.isna(row["folder"]):
+                raise ValueError("CSV folder is empty")
+            if PureWindowsPath(folder).drive and Path(folder).anchor == "":
+                raise ValueError("Windows path cannot be used here; use a relative CSV folder path")
+            case_path = data_root / Path(folder.replace("\\", "/"))
+            if not case_path.is_dir():
+                raise FileNotFoundError(f"Case directory does not exist: {case_path}")
             center_x, center_y = center_from_row(row)
             rotor_z, ground_z = rotor_ground_z_from_row(row)
             extract_velocity_case(
-                case_path=Path(".") / _folder_name(row["folder"]),
-                output_root=Path("./dataset_nd"),
+                case_path=case_path,
+                output_root=args.output_root,
                 rotor_spacing_m=rotor_spacing_from_row(row),
                 rotor_diameter_m=rotor_diameter_from_row(row),
                 disk_loading=disk_loading_from_row(row),
@@ -158,3 +176,10 @@ if __name__ == "__main__":
             )
         except Exception as exc:
             print(f"  [에러] {row.get('folder')}: {exc}")
+            failures.append(str(row.get("folder")))
+    if failures:
+        raise RuntimeError(f"Extraction failed for {len(failures)} case(s): {', '.join(failures)}")
+
+
+if __name__ == "__main__":
+    main()
