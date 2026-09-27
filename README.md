@@ -7,9 +7,6 @@ U-Net 아키텍처 기반의 멀티로터 유동장 무차원화 학습
 
 이 노트북은 실행 시 `https://github.com/jo-ban/multirotor.git`을 clone하여
 GitHub의 최신 코드를 사용합니다.
-추출 데이터셋은 `DRIVE_DATASET`에 캐시되며, 다음 런타임에서는 CFD를
-다시 추출하지 않고 캐시를 `/content`로 복사해 학습합니다. CFD 또는 CSV가
-바뀌 경우에만 `REBUILD_DATASET=True`로 설정합니다.
 
 노트북의 `DRIVE_DATA`, `DRIVE_CSV`, `DRIVE_RESULTS`를 실제 Google Drive 경로로
 설정하고 위에서 아래로 실행합니다. GitHub 코드 안에 개인 Drive 경로를 넣을 필요가 없습니다.
