@@ -11,9 +11,9 @@ from data_utils_cylindrical import (
     center_from_row,
     disk_loading_from_row,
     make_case_id,
-    rotor_diameter_from_row,
+    geometry_from_row,
+    geometry_from_rd_ratio,
     rotor_ground_z_from_row,
-    rotor_spacing_from_row,
 )
 from normalization import nondim_velocity
 
@@ -49,8 +49,8 @@ def _make_cylinder_points(center_x, center_y, disk_radius_m, ground_z_m, z_max_m
 def extract_velocity_case(
     case_path,
     output_root,
-    rotor_spacing_m,
-    rotor_diameter_m,
+    disk_radius_m,
+    l_over_d,
     disk_loading,
     rotor_z_m,
     ground_z_m,
@@ -58,10 +58,7 @@ def extract_velocity_case(
     center_y=0.0,
     source_folder=None,
 ):
-    l_over_d = rotor_spacing_m / rotor_diameter_m
-    disk_radius_m = rotor_spacing_m / np.sqrt(2.0) + rotor_diameter_m / 2.0
-    if disk_radius_m <= 0:
-        raise ValueError("멀티로터 외접원 반경 R_D는 0보다 커야 합니다.")
+    rotor_spacing_m, rotor_diameter_m = geometry_from_rd_ratio(disk_radius_m, l_over_d)
 
     foam_file = case_path / f"{case_path.name}.foam"
     if not foam_file.exists():
@@ -123,7 +120,7 @@ def extract_velocity_case(
         l_over_d=np.float32(l_over_d),
         rotor_spacing_m=np.float32(rotor_spacing_m),
         rotor_diameter_m=np.float32(rotor_diameter_m),
-        disk_radius_m=np.float32(disk_radius_m),
+        disk_radius_m=np.float64(disk_radius_m),
         disk_loading=np.float32(disk_loading),
         cylinder_radius_m=np.float32(cylinder_radius_m),
         center_xy_m=np.asarray((center_x, center_y), dtype=np.float32),
@@ -163,6 +160,9 @@ def main():
 
     if dataframe.empty:
         raise ValueError("CSV contains no cases")
+    radii = [geometry_from_row(row)[0] for _, row in dataframe.iterrows()]
+    if not np.allclose(radii, radii[0], rtol=1e-6, atol=1e-7):
+        raise ValueError("All cases in this fixed-RD extraction must use the same RD")
     failures = []
     for _, row in dataframe.iterrows():
         try:
@@ -176,11 +176,12 @@ def main():
                 raise FileNotFoundError(f"Case directory does not exist: {case_path}")
             center_x, center_y = center_from_row(row)
             rotor_z, ground_z = rotor_ground_z_from_row(row)
+            rd, ratio, _, _ = geometry_from_row(row)
             extract_velocity_case(
                 case_path=case_path,
                 output_root=args.output_root,
-                rotor_spacing_m=rotor_spacing_from_row(row),
-                rotor_diameter_m=rotor_diameter_from_row(row),
+                disk_radius_m=rd,
+                l_over_d=ratio,
                 disk_loading=disk_loading_from_row(row),
                 rotor_z_m=rotor_z,
                 ground_z_m=ground_z,

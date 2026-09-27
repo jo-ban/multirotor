@@ -7,7 +7,7 @@ import pandas as pd
 import torch
 
 from data_utils_cylindrical import (
-    case_ids_for_rows,
+    validation_ids_from_frame,
     TARGET_SCALE,
     validate_checkpoint,
     plot_extent,
@@ -24,16 +24,13 @@ MODEL_PATHS = {c: Path(f"rotor_unet_cyl2d_{c}.pth") for c in ("u", "v", "w")}
 
 def validation_case_ids(csv_path="./cases.csv", data_root=DATA_ROOT):
     dataframe = pd.read_csv(csv_path, dtype={"folder": str})
-    if "type" not in dataframe.columns:
-        return []
-    rows = dataframe[dataframe["type"].astype(str).str.strip().str.upper() == "V"]
-    return case_ids_for_rows(data_root, rows)
+    return validation_ids_from_frame(data_root, dataframe)
 
 
-def load_model(component, device, model_dir=None):
+def load_model(component, device, model_dir=None, expected_rd=None):
     path = MODEL_PATHS[component] if model_dir is None else Path(model_dir) / f"rotor_unet_cyl2d_{component}.pth"
     checkpoint = torch.load(path, map_location=device)
-    validate_checkpoint(checkpoint)
+    validate_checkpoint(checkpoint, expected_rd)
     model = CylindricalUNet2D(
         in_channels=4,
         out_channels=1,
@@ -59,7 +56,7 @@ def evaluate_case(case_id, device, show_plot=True, data_root=DATA_ROOT, model_di
     ai_nd = {}
     with torch.no_grad():
         for component in ("u", "v", "w"):
-            model, scale = load_model(component, device, model_dir)
+            model, scale = load_model(component, device, model_dir, meta["disk_radius_m"])
             ai_nd[component] = model(inputs)[0, 0].cpu().numpy() / scale
             del model
             if torch.cuda.is_available():

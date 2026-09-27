@@ -13,7 +13,8 @@ from data_utils_cylindrical import (
     validate_checkpoint,
     plot_extent,
     make_input_surface,
-    outer_radius_square_quadrotor,
+    FIXED_RD_M,
+    geometry_from_rd_ratio,
 )
 from model_cylindrical import CylindricalUNet2D
 from normalization import dimensional_velocity
@@ -23,12 +24,12 @@ from plot_hover import attach_velocity_hover
 MODEL_PATHS = {c: Path(f"rotor_unet_cyl2d_{c}.pth") for c in ("u", "v", "w")}
 
 
-def load_component_model(component, device, model_dir=None):
+def load_component_model(component, device, model_dir=None, expected_rd=None):
     path = MODEL_PATHS[component] if model_dir is None else Path(model_dir) / f"rotor_unet_cyl2d_{component}.pth"
     if not path.exists():
         raise FileNotFoundError(f"{path}가 없습니다. train_nd.py로 먼저 학습하세요.")
     checkpoint = torch.load(path, map_location=device)
-    validate_checkpoint(checkpoint)
+    validate_checkpoint(checkpoint, expected_rd)
     model = CylindricalUNet2D(
         in_channels=4,
         out_channels=1,
@@ -40,8 +41,8 @@ def load_component_model(component, device, model_dir=None):
 
 
 def predict_cylindrical_surface(
-    rotor_spacing_m,
-    rotor_diameter_m,
+    disk_radius_m,
+    l_over_d,
     disk_loading,
     rotor_z_m,
     ground_z_m,
@@ -53,7 +54,7 @@ def predict_cylindrical_surface(
     plot_path=None,
     backend="TkAgg",
 ):
-    """L과 D로 외접반경 R_D를 계산하고 r=2R_D 원통면의 U/V/W를 예측한다."""
+    """고정 RD와 L/D로 형상을 계산하고 r=2RD 원통면의 U/V/W를 예측한다."""
     if show_plot:
         try:
             plt.switch_backend(backend)
@@ -66,8 +67,7 @@ def predict_cylindrical_surface(
             ) from exc
     else:
         plt.switch_backend("Agg")
-    l_over_d = float(rotor_spacing_m) / float(rotor_diameter_m)
-    disk_radius_m = outer_radius_square_quadrotor(rotor_spacing_m, rotor_diameter_m)
+    rotor_spacing_m, rotor_diameter_m = geometry_from_rd_ratio(disk_radius_m, l_over_d)
     height_m = abs(float(rotor_z_m) - float(ground_z_m))
     if height_m <= 0:
         raise ValueError("rotor_z_m과 ground_z_m은 서로 달라야 합니다.")
@@ -84,7 +84,7 @@ def predict_cylindrical_surface(
     prediction_nd = {}
     with torch.no_grad():
         for component in ("u", "v", "w"):
-            model, scale = load_component_model(component, device, model_dir)
+            model, scale = load_component_model(component, device, model_dir, disk_radius_m)
             prediction_nd[component] = (
                 model(inputs)[0, 0].cpu().numpy() / scale
             ).astype(np.float32)
@@ -132,7 +132,7 @@ def predict_cylindrical_surface(
         rotor_spacing_m=np.float32(rotor_spacing_m),
         rotor_diameter_m=np.float32(rotor_diameter_m),
         l_over_d=np.float32(l_over_d),
-        disk_radius_m=np.float32(disk_radius_m),
+        disk_radius_m=np.float64(disk_radius_m),
         cylinder_radius_m=np.float32(2.0 * disk_radius_m),
         disk_loading=np.float32(disk_loading),
     )
@@ -172,11 +172,11 @@ if __name__ == "__main__":
     parser = argparse.ArgumentParser(description="Predict a cylindrical velocity field")
     parser.add_argument("--model-dir", type=Path, default=Path("."))
     parser.add_argument("--output", type=Path, default=Path("prediction_cylinder_r2RD.npz"))
-    parser.add_argument("--rotor-spacing", type=float, default=1.25)
-    parser.add_argument("--rotor-diameter", type=float, default=1.0)
-    parser.add_argument("--disk-loading", type=float, default=153.22)
-    parser.add_argument("--rotor-z", type=float, default=2.0)
-    parser.add_argument("--ground-z", type=float, default=0.0)
+    parser.add_argument("--rd", type=float, default=FIXED_RD_M, help="Fixed outer radius RD [m] (default: 9.3101751)")
+    parser.add_argument("--l-over-d", type=float, default=1.5, help="Rotor spacing / rotor diameter")
+    parser.add_argument("--disk-loading", type=float, required=True, help="Actual disk loading [N/m^2]")
+    parser.add_argument("--rotor-z", type=float, default=9.3101752)
+    parser.add_argument("--ground-z", type=float, required=True, help="Actual ground z [m]")
     parser.add_argument("--z-max", type=float, required=True, help="Mesh maximum z [m]; use the value reported by extraction")
     parser.add_argument("--no-show", action="store_true")
     parser.add_argument("--backend", default="TkAgg", choices=("TkAgg", "QtAgg"),
@@ -184,8 +184,8 @@ if __name__ == "__main__":
     parser.add_argument("--plot-output", type=Path, help="Optional plot file; no PNG is saved by default")
     args = parser.parse_args()
     predict_cylindrical_surface(
-        rotor_spacing_m=args.rotor_spacing,
-        rotor_diameter_m=args.rotor_diameter,
+        disk_radius_m=args.rd,
+        l_over_d=args.l_over_d,
         disk_loading=args.disk_loading,
         rotor_z_m=args.rotor_z,
         ground_z_m=args.ground_z,

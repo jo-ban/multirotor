@@ -7,6 +7,43 @@ COORDINATE_SYSTEM = "absolute_z_over_rd_v1"
 INPUT_CHANNELS = ("L/D", "sin(theta)", "cos(theta)", "z/R_D")
 TARGET_SCALE = 100.0
 DEFAULT_SHAPE_ZTHETA = (256, 256)
+FIXED_RD_M = 9.3101751
+
+
+def geometry_from_rd_ratio(rd_m, l_over_d):
+    """Keep RD fixed; infer L and D from q=L/D for a square quadrotor."""
+    rd_m, l_over_d = float(rd_m), float(l_over_d)
+    if not np.isfinite([rd_m, l_over_d]).all() or rd_m <= 0 or l_over_d <= 0:
+        raise ValueError("RD and L/D must be finite and positive")
+    diameter = rd_m / (l_over_d / np.sqrt(2.0) + 0.5)
+    return l_over_d * diameter, diameter
+
+
+def _geometry_value(row, names, default=None):
+    values = [float(row[name]) for name in names
+              if name in row and str(row[name]).strip().lower() not in ("", "nan", "<na>", "none")]
+    if not values:
+        return default
+    if not np.isfinite(values).all() or not np.allclose(values, values[0], rtol=1e-6, atol=1e-8):
+        raise ValueError(f"Invalid or conflicting geometry columns: {names}")
+    return values[0]
+
+
+def geometry_from_row(row):
+    """Preferred CSV: RD,L_over_D (also R_D and L/D); RD may be omitted."""
+    rd = _geometry_value(row, ("RD", "R_D", "rd_m", "disk_radius_m"), FIXED_RD_M)
+    ratio = _geometry_value(row, ("L_over_D", "L/D", "l_over_d"))
+    old_l = _geometry_value(row, ("L", "spacing", "rotor_spacing", "rotor_spacing_m"))
+    old_d = _geometry_value(row, ("D", "diameter", "rotor_diameter", "rotor_diameter_m"))
+    if ratio is None:
+        if old_l is None or old_d is None or old_l <= 0 or old_d <= 0:
+            raise ValueError("CSV requires L_over_D (or L/D); RD defaults to 9.3101751 m")
+        ratio = old_l / old_d
+    spacing, diameter = geometry_from_rd_ratio(rd, ratio)
+    for supplied, inferred in ((old_l, spacing), (old_d, diameter)):
+        if supplied is not None and not np.isclose(supplied, inferred, rtol=1e-6, atol=1e-7):
+            raise ValueError("L/D columns conflict with RD and L_over_D; use the RD,L_over_D input format")
+    return rd, ratio, spacing, diameter
 
 
 def _first_numeric(row, keys, default=None):
@@ -20,12 +57,12 @@ def _first_numeric(row, keys, default=None):
 
 def rotor_spacing_from_row(row):
     """인접한 개별 로터 중심 사이 거리 L [m]를 읽는다."""
-    return _first_numeric(row, ("L", "spacing", "rotor_spacing", "rotor_spacing_m"))
+    return geometry_from_row(row)[2]
 
 
 def rotor_diameter_from_row(row):
     """개별 로터 한 개의 직경 D [m]를 읽는다."""
-    return _first_numeric(row, ("D", "diameter", "rotor_diameter", "rotor_diameter_m"))
+    return geometry_from_row(row)[3]
 
 
 def outer_radius_square_quadrotor(rotor_spacing_m, rotor_diameter_m):
@@ -43,14 +80,12 @@ def outer_radius_square_quadrotor(rotor_spacing_m, rotor_diameter_m):
 
 def l_over_d_from_row(row):
     """L과 D로 간격비 L/D를 계산한다."""
-    return rotor_spacing_from_row(row) / rotor_diameter_from_row(row)
+    return geometry_from_row(row)[1]
 
 
 def disk_radius_from_row(row):
     """정사각형으로 배치된 4개 로터 전체의 외접원 반경 R_D [m]를 계산한다."""
-    return outer_radius_square_quadrotor(
-        rotor_spacing_from_row(row), rotor_diameter_from_row(row)
-    )
+    return geometry_from_row(row)[0]
 
 
 def disk_loading_from_row(row):
@@ -150,36 +185,49 @@ def find_case_ids(data_root):
 
 
 def case_ids_for_rows(data_root, rows):
-    """Resolve CSV rows against extraction metadata; do not infer the mesh top from CSV."""
+    """Resolve validation identifiers only; physical inputs come from extracted NPZs."""
     records = [(case_id, load_case_input(Path(data_root) / "inputs" / f"input_{case_id}.npz"))
                for case_id in find_case_ids(data_root)]
     selected = []
     for _, row in rows.iterrows():
-        folder = str(row["folder"]).strip().replace("\\", "/")
-        rotor_z, ground_z = rotor_ground_z_from_row(row)
-        expected = {"rotor_spacing_m": rotor_spacing_from_row(row),
-                    "rotor_diameter_m": rotor_diameter_from_row(row),
-                    "rotor_z_m": rotor_z, "ground_z_m": ground_z,
-                    "disk_loading": disk_loading_from_row(row)}
-        center = center_from_row(row)
+        explicit_id = str(row.get("case_id", "")).strip()
+        folder = str(row.get("folder", "")).strip().replace("\\", "/")
+        if explicit_id.lower() in ("", "nan", "<na>"):
+            explicit_id = ""
         matches = [case_id for case_id, meta in records
-                   if meta["source_folder"] == folder
-                   and all(np.isclose(meta[key], value) for key, value in expected.items())
-                   and np.allclose(meta["center_xy_m"], center)]
+                   if (case_id == explicit_id if explicit_id else meta["source_folder"] == folder)]
         if len(matches) != 1:
-            raise ValueError(f"Expected one extracted case for {folder}, found {len(matches)}. Re-extract into a clean directory.")
+            raise ValueError(f"Expected one extracted case for {explicit_id or folder}, found {len(matches)}. Specify case_id for ambiguous folders.")
         selected.extend(matches)
     if len(set(selected)) != len(selected):
         raise ValueError("Duplicate CSV cases; training and validation must not share a case")
     return selected
 
 
-def validate_checkpoint(checkpoint):
+def validation_ids_from_frame(data_root, dataframe):
+    if "type" not in dataframe:
+        return []
+    labels = dataframe["type"].astype(str).str.strip().str.upper()
+    # A repeated identifier must not silently appear in both train and validation.
+    if "folder" in dataframe:
+        keys = dataframe["folder"].astype(str).str.strip().str.replace("\\", "/", regex=False)
+        if "case_id" in dataframe:
+            ids = dataframe["case_id"].fillna("").astype(str).str.strip()
+            keys = ids.where(ids != "", keys)
+        if keys.duplicated().any():
+            raise ValueError("Duplicate CSV identifiers; use unique folder or case_id values")
+    return case_ids_for_rows(data_root, dataframe[labels == "V"])
+
+
+def validate_checkpoint(checkpoint, expected_rd=None):
     if (checkpoint.get("coordinate_system") != COORDINATE_SYSTEM
             or tuple(checkpoint.get("input_channels", ())) != INPUT_CHANNELS
             or checkpoint.get("in_channels") != 4
             or checkpoint["state_dict"]["enc1.block.0.conv.weight"].shape[1] != 4):
         raise ValueError("A newly trained 4-channel z/R_D checkpoint is required; old s/R_D and 5-channel weights are incompatible")
+    if expected_rd is not None and "disk_radius_m" in checkpoint:
+        if not np.isclose(float(checkpoint["disk_radius_m"]), expected_rd, rtol=1e-6, atol=1e-7):
+            raise ValueError("Prediction RD differs from the fixed RD used for training")
 
 
 def plot_extent(theta_deg, z_m):

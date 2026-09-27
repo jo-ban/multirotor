@@ -12,7 +12,8 @@ from data_utils_cylindrical import (
     TARGET_SCALE,
     COORDINATE_SYSTEM,
     INPUT_CHANNELS,
-    case_ids_for_rows,
+    find_case_ids,
+    validation_ids_from_frame,
     load_case_input,
     make_input_surface,
 )
@@ -38,11 +39,16 @@ class CylindricalSurfaceDataset(Dataset):
             raise ValueError("component는 'u', 'v', 'w' 중 하나여야 합니다.")
 
         dataframe = pd.read_csv(csv_path, dtype={"folder": str})
-        all_ids = case_ids_for_rows(self.root, dataframe)
-        labels = dataframe["type"].astype(str).str.strip().str.upper() if "type" in dataframe else ["T"] * len(dataframe)
-        self.case_ids = [case_id for case_id, label in zip(all_ids, labels) if label != "V"]
+        all_ids = find_case_ids(self.root)
+        excluded = set(validation_ids_from_frame(self.root, dataframe))
+        self.case_ids = [case_id for case_id in all_ids if case_id not in excluded]
         if not self.case_ids:
             raise RuntimeError("학습용 케이스가 없습니다. extract_nd.py를 먼저 실행하세요.")
+        radii = [load_case_input(self.root / "inputs" / f"input_{case_id}.npz")["disk_radius_m"]
+                 for case_id in all_ids]
+        if not np.allclose(radii, radii[0], rtol=1e-6, atol=1e-7):
+            raise ValueError("Extracted dataset contains different RD values; use one fixed RD")
+        self.disk_radius_m = radii[0]
         print(f"  [{self.component.upper()}] 학습 케이스: {len(self.case_ids)}개")
 
     def __len__(self):
@@ -61,12 +67,13 @@ class CylindricalSurfaceDataset(Dataset):
         return torch.from_numpy(inputs), torch.from_numpy(target)
 
 
-def save_checkpoint(model, path, component):
+def save_checkpoint(model, path, component, disk_radius_m):
     torch.save(
         {
             "state_dict": model.state_dict(),
             "component": component,
             "in_channels": 4,
+            "disk_radius_m": float(disk_radius_m),
             "coordinate_system": COORDINATE_SYSTEM,
             "input_channels": INPUT_CHANNELS,
             "out_channels": 1,
@@ -117,7 +124,7 @@ def train_one_component(component, device, data_root=DATA_ROOT, csv_path=CSV_PAT
 
     Path(model_dir).mkdir(parents=True, exist_ok=True)
     model_path = Path(model_dir) / f"rotor_unet_cyl2d_{component}.pth"
-    save_checkpoint(model, model_path, component)
+    save_checkpoint(model, model_path, component, dataset.disk_radius_m)
     print(f"  저장: {model_path}")
 
 
