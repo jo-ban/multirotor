@@ -84,21 +84,46 @@ def evaluate_case(case_id, device, show_plot=True, data_root=DATA_ROOT, model_di
         f"|U| MAE={magnitude_mae:.5f} m/s"
     )
 
+    from visualize_validation import comparison_fields, export_html
+    cfd_fields = {**cfd_cyl, "magnitude": magnitude_cfd}
+    ai_fields = {**ai_cyl, "magnitude": magnitude_ai}
+    fields = comparison_fields(cfd_fields, ai_fields)
+    if output_dir is not None:
+        destination = Path(output_dir)
+        destination.mkdir(parents=True, exist_ok=True)
+        comparison_path = destination / f"comparison_{case_id}.npz"
+        np.savez_compressed(
+            comparison_path, case_id=case_id,
+            theta_deg=np.rad2deg(theta_rad), z_m=meta["z_m"],
+            cylinder_radius_m=meta["cylinder_radius_m"],
+            **{f"cfd_{key}": value for key, value in cfd_fields.items()},
+            **{f"prediction_{key}": value for key, value in ai_fields.items()},
+        )
+        html_path = destination / f"comparison_{case_id}.html"
+        export_html(comparison_path, html_path)
+        print(f"Comparison HTML saved: {html_path}")
+
     if show_plot or output_dir is not None:
         theta_deg = np.linspace(0, 360, meta["shape_ztheta"][1], endpoint=False)
         extent = plot_extent(theta_deg, meta["z_m"])
-        fig, axes = plt.subplots(1, 3, figsize=(16, 4.5))
-        for ax, data, title in zip(
-            axes,
-            (magnitude_cfd, magnitude_ai, magnitude_error),
-            ("CFD magnitude", "AI magnitude", "Absolute error"),
-        ):
-            image = ax.imshow(data, origin="lower", extent=extent, aspect="auto", cmap="turbo")
-            ax.set_title(title)
-            ax.set_xlabel("azimuth theta [deg]")
-            ax.set_ylabel("z [m]")
-            ax.set_ylim(float(meta["z_m"][0]), float(meta["z_m"][-1]))
-            fig.colorbar(image, ax=ax, label="m/s")
+        fig, axes = plt.subplots(4, 3, figsize=(17, 15))
+        labels = ("U_r (radial)", "U_theta (azimuthal)", "U_z (axial)", "|U| (speed)")
+        for row, (label, values) in enumerate(zip(labels, fields)):
+            limit = max(float(np.max(np.abs(values[0]))), float(np.max(np.abs(values[1]))), 1e-9)
+            for col, (data, title) in enumerate(zip(values, ("CFD", "Prediction", "Absolute error"))):
+                ax = axes[row, col]
+                is_error = col == 2
+                image = ax.imshow(
+                    data, origin="lower", extent=extent, aspect="auto",
+                    cmap="Reds" if is_error else ("turbo" if row == 3 else "RdBu_r"),
+                    vmin=0 if is_error or row == 3 else -limit,
+                    vmax=max(float(data.max()), 1e-9) if is_error else limit,
+                )
+                ax.set_title(f"{title} · {label}")
+                ax.set_xlabel("azimuth theta [deg]")
+                ax.set_ylabel("z [m]")
+                ax.set_ylim(float(meta["z_m"][0]), float(meta["z_m"][-1]))
+                fig.colorbar(image, ax=ax, label="m/s")
         plt.suptitle(f"{case_id} | cylinder r=2R_D | magnitude MAE={magnitude_mae:.5f} m/s")
         plt.tight_layout()
         if output_dir is not None:
