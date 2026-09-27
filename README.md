@@ -3,7 +3,10 @@ U-Net 아키텍처 기반의 멀티로터 유동장 무차원화 학습
 
 ## Google Colab에서 실행
 
-[Colab 노트북 열기](https://colab.research.google.com/github/jo-ban/multirotor/blob/main/multirotor_colab.ipynb)
+[Google Drive Colab 노트북 열기](https://colab.research.google.com/drive/183B-S7CGxb6Yrkflm3Nd-maWbtMf7OQ1?authuser=2)
+
+이 노트북은 실행 시 `https://github.com/jo-ban/multirotor.git`을 clone하여
+GitHub의 최신 코드를 사용합니다.
 
 노트북의 `DRIVE_DATA`, `DRIVE_CSV`, `DRIVE_RESULTS`를 실제 Google Drive 경로로
 설정하고 위에서 아래로 실행합니다. GitHub 코드 안에 개인 Drive 경로를 넣을 필요가 없습니다.
