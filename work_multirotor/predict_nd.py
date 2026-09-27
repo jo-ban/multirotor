@@ -145,6 +145,12 @@ def predict_cylindrical_surface(
     )
     print(f"r=2R_D 원통 표면 예측 결과 저장: {save_path}")
 
+    # Keep the browser viewer beside the numerical output, including on Drive.
+    from visualize_prediction_3d import export_html
+    html_path = Path(save_path).with_name(Path(save_path).stem + "_3d.html")
+    export_html(save_path, html_path)
+    print(f"Interactive 3D HTML saved: {html_path}")
+
     if show_plot or plot_path is not None:
         extent = plot_extent(theta_deg, z_m)
         fig, axes = plt.subplots(2, 2, figsize=(13, 8))

@@ -8,6 +8,7 @@ Usage: bash rotor.sh COMMAND [OPTIONS]
   check       Check Python packages and CUDA availability
   extract     Run extract_nd.py
   visualize   Run visualize_cylindrical_data.py (save PNG)
+  view3d      Convert prediction NPZ to interactive HTML (--input required)
   train       Run train_nd.py (U/V/W)
   evaluate    Run evaluate_error.py (validation cases)
   predict     Open interactive prediction plot with mouse velocity readout; save NPZ
@@ -25,7 +26,7 @@ command="${1:-help}"
 if (( $# )); then shift; fi
 case "$command" in
     help|-h|--help) usage; exit 0 ;;
-    setup|check|extract|visualize|train|evaluate|predict|test) ;;
+    setup|check|extract|visualize|view3d|train|evaluate|predict|test) ;;
     *) echo "Unknown command: $command" >&2; usage >&2; exit 2 ;;
 esac
 if [[ "$command" == setup ]]; then
@@ -55,6 +56,8 @@ case "$command" in
         exec "$PY" "$ROOT/extract_nd.py" --csv "$ROOT/cases.csv" --output-root "$ROOT/dataset_zrd" "$@" ;;
     visualize)
         exec "$PY" "$ROOT/visualize_cylindrical_data.py" --data-root "$ROOT/dataset_zrd" --output-dir "$ROOT/results/visualize" "$@" ;;
+    view3d)
+        exec "$PY" "$ROOT/visualize_prediction_3d.py" "$@" ;;
     train)
         exec "$PY" "$ROOT/train_nd.py" --csv "$ROOT/cases.csv" --data-root "$ROOT/dataset_zrd" --model-dir "$ROOT/models_zrd" "$@" ;;
     evaluate)

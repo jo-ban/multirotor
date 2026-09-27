@@ -1,6 +1,28 @@
 # multirotor
 U-Net 아키텍처 기반의 멀티로터 유동장 무차원화 학습
 
+## 회전 가능한 3D 결과
+
+Colab 예측 셀은 기존 NPZ/PNG와 함께 `results/prediction_3d.html`을 Drive에 저장하고
+노트북에도 3D 그래프를 표시합니다. HTML을 내려받아 브라우저에서 열면 Colab 연결 없이
+회전·확대·값 확인 및 U_r/U_theta/U_z/속력 선택을 할 수 있습니다.
+`predict_nd.py` 자체가 NPZ 옆에 `<NPZ 이름>_3d.html`을 자동 생성합니다.
+기존 Colab 노트북도 GitHub 코드와 requirements를 업데이트하면 예측 셀 수정 없이 HTML이 저장됩니다.
+이미 실행 중인 Colab은 저장소 코드를 갱신하고 requirements를 다시 설치한 뒤 예측 셀을 실행하세요.
+
+기존 예측 결과만으로도 생성할 수 있습니다(학습/예측 재실행 불필요).
+
+```bash
+pip install -r work_multirotor/requirements.txt
+python work_multirotor/visualize_prediction_3d.py --input prediction.npz --output prediction_3d.html
+```
+
+Linux 런처에서는 `bash rotor.sh view3d --input prediction.npz --output prediction_3d.html`을 사용합니다.
+색은 실제 저장된 속도[m/s]이며 성분은 0 중심 대칭 색 범위, 속력은 0 이상 범위를 사용합니다.
+측정면은 고정 반경 2RD의 원통이며 내부 체적 유동장을 의미하지 않습니다.
+중앙 로터는 저장된 간격/직경/높이를 이용한 정사각형 배치 도식이고 실제 기체 CAD가 아닙니다.
+원통과 로터의 수평 중심은 (0, 0), 높이는 NPZ의 실제 z 좌표입니다.
+
 ## Google Colab에서 실행
 
 [Google Drive Colab 노트북 열기](https://colab.research.google.com/drive/183B-S7CGxb6Yrkflm3Nd-maWbtMf7OQ1?authuser=2)
