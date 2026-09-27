@@ -62,12 +62,19 @@ class ColabPathsTest(unittest.TestCase):
                 make_case(raw / folder)
             csv = raw / 'case.csv'
             csv.write_text('folder,L,D,rotor_z,ground_z,load,type\n'
-                           '001,1,1,2,0,153.22,T\n002,1.5,1,2,0,153.22,V\n')
+                           '001,1,1,0,-1,153.22,T\n002,1.5,1,0,-1,153.22,V\n')
             dataset, models, results = (root / n for n in ('dataset', 'models', 'results'))
             # Default data root is the CSV parent, even from an unrelated cwd.
             self.run_script(root, 'extract_nd.py', '--csv', csv, '--output-root', dataset)
             targets = list((dataset / 'targets_u').glob('*.npy'))
             self.assertEqual(len(targets), 2)
+            for metadata in (dataset / 'inputs').glob('*.npz'):
+                with np.load(metadata) as meta:
+                    self.assertEqual(float(meta['z_m'][0]), -1.0)
+                    self.assertEqual(float(meta['z_m'][-1]), 3.0)
+                    self.assertTrue(np.all(np.diff(meta['z_m']) > 0))
+                    np.testing.assert_allclose(meta['z_over_rd'], meta['z_m'] / meta['disk_radius_m'], rtol=1e-6)
+                    self.assertNotIn('s_over_rd', meta.files)
             np.testing.assert_allclose(np.load(targets[0]), 1 / np.sqrt(153.22 / 2.45), rtol=1e-5)
             from train_nd import CylindricalSurfaceDataset
             self.assertEqual(len(CylindricalSurfaceDataset(dataset, 'u', csv)), 1)
@@ -75,11 +82,18 @@ class ColabPathsTest(unittest.TestCase):
                             '--model-dir', models, '--epochs', 1)
             self.assertEqual(len(list(models.glob('*.pth'))), 3)
             self.run_script(root, 'predict_nd.py', '--model-dir', models,
-                            '--output', results / 'prediction.npz', '--no-show')
+                            '--output', results / 'prediction.npz', '--no-show',
+                            '--ground-z', -1, '--rotor-z', 0, '--z-max', 3,
+                            '--plot-output', results / 'prediction.png')
             with np.load(results / 'prediction.npz') as prediction:
                 self.assertEqual(prediction['u_mps'].shape, (256, 256))
                 self.assertTrue(np.isfinite(prediction['u_mps']).all())
+                self.assertEqual(float(prediction['z_m'][0]), -1)
+                self.assertEqual(float(prediction['z_m'][-1]), 3)
             self.assertTrue((results / 'prediction.png').is_file())
+            self.run_script(root, 'visualize_cylindrical_data.py', '--data-root', dataset,
+                            '--output-dir', results / 'visualize')
+            self.assertEqual(len(list((results / 'visualize').glob('surface_*.png'))), 1)
             self.run_script(root, 'evaluate_error.py', '--csv', csv, '--data-root', dataset,
                             '--model-dir', models, '--output-dir', results / 'eval', '--no-show')
             self.assertTrue((results / 'eval' / 'validation_errors_cyl2rd.csv').is_file())
@@ -88,6 +102,8 @@ class ColabPathsTest(unittest.TestCase):
                             '--output-root', root / 'bad', success=False)
             self.run_script(root, 'train_nd.py', '--csv', root / 'missing.csv',
                             '--data-root', dataset, '--epochs', 1, success=False)
+            self.run_script(root, 'predict_nd.py', '--model-dir', models,
+                            '--ground-z', 3, '--z-max', 2, '--no-show', success=False)
 
 
 if __name__ == '__main__':

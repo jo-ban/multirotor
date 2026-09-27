@@ -7,42 +7,35 @@ import pandas as pd
 import torch
 
 from data_utils_cylindrical import (
+    case_ids_for_rows,
     TARGET_SCALE,
-    disk_radius_from_row,
-    height_over_rd_from_row,
-    l_over_d_from_row,
+    validate_checkpoint,
+    plot_extent,
     load_case_input,
-    make_case_id,
     make_input_surface,
 )
 from model_cylindrical import CylindricalUNet2D
 from normalization import dimensional_velocity
 
 
-DATA_ROOT = Path("./dataset_nd")
+DATA_ROOT = Path("./dataset_zrd")
 MODEL_PATHS = {c: Path(f"rotor_unet_cyl2d_{c}.pth") for c in ("u", "v", "w")}
 
 
-def validation_case_ids(csv_path="./cases.csv"):
-    dataframe = pd.read_csv(csv_path)
+def validation_case_ids(csv_path="./cases.csv", data_root=DATA_ROOT):
+    dataframe = pd.read_csv(csv_path, dtype={"folder": str})
     if "type" not in dataframe.columns:
         return []
-    rows = dataframe[dataframe["type"].astype(str).str.upper() == "V"]
-    return [
-        make_case_id(
-            l_over_d_from_row(row),
-            disk_radius_from_row(row),
-            height_over_rd_from_row(row),
-        )
-        for _, row in rows.iterrows()
-    ]
+    rows = dataframe[dataframe["type"].astype(str).str.strip().str.upper() == "V"]
+    return case_ids_for_rows(data_root, rows)
 
 
 def load_model(component, device, model_dir=None):
     path = MODEL_PATHS[component] if model_dir is None else Path(model_dir) / f"rotor_unet_cyl2d_{component}.pth"
     checkpoint = torch.load(path, map_location=device)
+    validate_checkpoint(checkpoint)
     model = CylindricalUNet2D(
-        in_channels=int(checkpoint.get("in_channels", 5)),
+        in_channels=4,
         out_channels=1,
         base_channels=int(checkpoint.get("base_channels", 16)),
     ).to(device)
@@ -55,7 +48,7 @@ def evaluate_case(case_id, device, show_plot=True, data_root=DATA_ROOT, model_di
     data_root = Path(data_root)
     meta = load_case_input(data_root / "inputs" / f"input_{case_id}.npz")
     input_array = make_input_surface(
-        meta["l_over_d"], meta["height_over_rd"], meta["shape_ztheta"]
+        meta["l_over_d"], meta["z_over_rd"], meta["shape_ztheta"]
     )
     inputs = torch.from_numpy(input_array[None, ...]).to(device)
     cfd_nd = {
@@ -87,7 +80,8 @@ def evaluate_case(case_id, device, show_plot=True, data_root=DATA_ROOT, model_di
     )
 
     if show_plot or output_dir is not None:
-        extent = (0.0, 360.0, 0.0, meta["height_over_rd"])
+        theta_deg = np.linspace(0, 360, meta["shape_ztheta"][1], endpoint=False)
+        extent = plot_extent(theta_deg, meta["z_m"])
         fig, axes = plt.subplots(1, 3, figsize=(16, 4.5))
         for ax, data, title in zip(
             axes,
@@ -97,7 +91,8 @@ def evaluate_case(case_id, device, show_plot=True, data_root=DATA_ROOT, model_di
             image = ax.imshow(data, origin="lower", extent=extent, aspect="auto", cmap="turbo")
             ax.set_title(title)
             ax.set_xlabel("azimuth theta [deg]")
-            ax.set_ylabel("s/R_D (rotor to ground)")
+            ax.set_ylabel("z [m]")
+            ax.set_ylim(float(meta["z_m"][0]), float(meta["z_m"][-1]))
             fig.colorbar(image, ax=ax, label="m/s")
         plt.suptitle(f"{case_id} | cylinder r=2R_D | magnitude MAE={magnitude_mae:.5f} m/s")
         plt.tight_layout()
@@ -124,7 +119,7 @@ if __name__ == "__main__":
     parser.add_argument("--no-show", action="store_true")
     args = parser.parse_args()
     device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
-    case_ids = validation_case_ids(args.csv)
+    case_ids = validation_case_ids(args.csv, args.data_root)
     if not case_ids:
         raise RuntimeError("cases.csv에서 type='V' 검증 케이스를 찾지 못했습니다.")
     results = [evaluate_case(case_id, device, show_plot=not args.no_show,

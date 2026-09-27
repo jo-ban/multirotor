@@ -10,18 +10,16 @@ from torch.utils.data import DataLoader, Dataset
 
 from data_utils_cylindrical import (
     TARGET_SCALE,
-    disk_radius_from_row,
-    find_case_ids,
-    height_over_rd_from_row,
-    l_over_d_from_row,
+    COORDINATE_SYSTEM,
+    INPUT_CHANNELS,
+    case_ids_for_rows,
     load_case_input,
-    make_case_id,
     make_input_surface,
 )
 from model_cylindrical import CylindricalUNet2D
 
 
-DATA_ROOT = Path("./dataset_nd")
+DATA_ROOT = Path("./dataset_zrd")
 CSV_PATH = Path("./cases.csv")
 COMPONENTS = ("u", "v", "w")
 NUM_EPOCHS = 100
@@ -39,24 +37,10 @@ class CylindricalSurfaceDataset(Dataset):
         if self.component not in COMPONENTS:
             raise ValueError("component는 'u', 'v', 'w' 중 하나여야 합니다.")
 
-        excluded = set()
-        if Path(csv_path).exists():
-            dataframe = pd.read_csv(csv_path)
-            if "type" in dataframe.columns:
-                validation_rows = dataframe[dataframe["type"].astype(str).str.upper() == "V"]
-                for _, row in validation_rows.iterrows():
-                    try:
-                        excluded.add(
-                            make_case_id(
-                                l_over_d_from_row(row),
-                                disk_radius_from_row(row),
-                                height_over_rd_from_row(row),
-                            )
-                        )
-                    except Exception:
-                        pass
-
-        self.case_ids = [case_id for case_id in find_case_ids(self.root) if case_id not in excluded]
+        dataframe = pd.read_csv(csv_path, dtype={"folder": str})
+        all_ids = case_ids_for_rows(self.root, dataframe)
+        labels = dataframe["type"].astype(str).str.strip().str.upper() if "type" in dataframe else ["T"] * len(dataframe)
+        self.case_ids = [case_id for case_id, label in zip(all_ids, labels) if label != "V"]
         if not self.case_ids:
             raise RuntimeError("학습용 케이스가 없습니다. extract_nd.py를 먼저 실행하세요.")
         print(f"  [{self.component.upper()}] 학습 케이스: {len(self.case_ids)}개")
@@ -68,7 +52,7 @@ class CylindricalSurfaceDataset(Dataset):
         case_id = self.case_ids[index]
         meta = load_case_input(self.root / "inputs" / f"input_{case_id}.npz")
         inputs = make_input_surface(
-            meta["l_over_d"], meta["height_over_rd"], meta["shape_ztheta"]
+            meta["l_over_d"], meta["z_over_rd"], meta["shape_ztheta"]
         )
         target = np.load(
             self.root / f"targets_{self.component}" / f"{self.component}_{case_id}.npy"
@@ -82,7 +66,9 @@ def save_checkpoint(model, path, component):
         {
             "state_dict": model.state_dict(),
             "component": component,
-            "in_channels": 5,
+            "in_channels": 4,
+            "coordinate_system": COORDINATE_SYSTEM,
+            "input_channels": INPUT_CHANNELS,
             "out_channels": 1,
             "base_channels": BASE_CHANNELS,
             "target_scale": TARGET_SCALE,
@@ -107,7 +93,7 @@ def train_one_component(component, device, data_root=DATA_ROOT, csv_path=CSV_PAT
         pin_memory=torch.cuda.is_available(),
     )
     model = CylindricalUNet2D(
-        in_channels=5, out_channels=1, base_channels=BASE_CHANNELS
+        in_channels=4, out_channels=1, base_channels=BASE_CHANNELS
     ).to(device)
     criterion = nn.L1Loss()
     optimizer = optim.Adam(model.parameters(), lr=LEARNING_RATE)

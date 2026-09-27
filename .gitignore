@@ -2,6 +2,9 @@ __pycache__/
 *.pyc
 .venv/
 dataset_nd/
+dataset_zrd/
+models_zrd/
+results/
 *.pth
 *.npy
 *.npz

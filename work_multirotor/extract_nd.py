@@ -1,4 +1,5 @@
 import argparse
+import hashlib
 from pathlib import Path, PureWindowsPath
 
 import numpy as np
@@ -6,6 +7,7 @@ import pandas as pd
 import pyvista as pv
 
 from data_utils_cylindrical import (
+    COORDINATE_SYSTEM,
     center_from_row,
     disk_loading_from_row,
     make_case_id,
@@ -28,19 +30,20 @@ def _folder_name(value):
     return str(value)
 
 
-def _make_cylinder_points(center_x, center_y, disk_radius_m, rotor_z_m, ground_z_m, nz, ntheta):
-    """로터면부터 지면까지 r=2R_D 원통 옆면의 점을 만든다."""
+def _make_cylinder_points(center_x, center_y, disk_radius_m, ground_z_m, z_max_m, nz, ntheta):
+    """지면부터 메시 최대 z까지 증가하는 r=2R_D 원통 좌표를 만든다."""
     theta = np.linspace(0.0, 2.0 * np.pi, ntheta, endpoint=False, dtype=np.float64)
-    z_m = np.linspace(rotor_z_m, ground_z_m, nz, dtype=np.float64)
-    height_m = abs(rotor_z_m - ground_z_m)
-    s_over_rd = np.linspace(0.0, height_m / disk_radius_m, nz, dtype=np.float64)
+    if not np.isfinite([ground_z_m, z_max_m, disk_radius_m]).all() or z_max_m <= ground_z_m or disk_radius_m <= 0:
+        raise ValueError("Require finite ground_z < mesh z_max and R_D > 0")
+    z_m = np.linspace(ground_z_m, z_max_m, nz, dtype=np.float64)
+    z_over_rd = z_m / disk_radius_m
     theta_grid, z_grid = np.meshgrid(theta, z_m, indexing="xy")
 
     cylinder_radius_m = CYLINDER_RADIUS_OVER_RD * disk_radius_m
     x = center_x + cylinder_radius_m * np.cos(theta_grid)
     y = center_y + cylinder_radius_m * np.sin(theta_grid)
     points = np.column_stack((x.ravel(), y.ravel(), z_grid.ravel()))
-    return points, theta, z_m, s_over_rd, cylinder_radius_m
+    return points, theta, z_m, z_over_rd, cylinder_radius_m
 
 
 def extract_velocity_case(
@@ -53,6 +56,7 @@ def extract_velocity_case(
     ground_z_m,
     center_x=0.0,
     center_y=0.0,
+    source_folder=None,
 ):
     l_over_d = rotor_spacing_m / rotor_diameter_m
     disk_radius_m = rotor_spacing_m / np.sqrt(2.0) + rotor_diameter_m / 2.0
@@ -73,9 +77,12 @@ def extract_velocity_case(
     mesh = multi_block["internalMesh"] if "internalMesh" in multi_block.keys() else multi_block[0]
     mesh = mesh.cell_data_to_point_data()
 
+    z_min_m, z_max_m = map(float, mesh.bounds[4:6])
+    if not z_min_m <= ground_z_m < z_max_m:
+        raise ValueError(f"ground_z={ground_z_m} must lie in mesh z bounds [{z_min_m}, {z_max_m})")
     nz, ntheta = map(int, RESOLUTION_Z_THETA)
-    points, theta, z_m, s_over_rd, cylinder_radius_m = _make_cylinder_points(
-        center_x, center_y, disk_radius_m, rotor_z_m, ground_z_m, nz, ntheta
+    points, theta, z_m, z_over_rd, cylinder_radius_m = _make_cylinder_points(
+        center_x, center_y, disk_radius_m, ground_z_m, z_max_m, nz, ntheta
     )
     sampled = pv.PolyData(points).sample(mesh)
     if "U" not in sampled.point_data:
@@ -104,9 +111,15 @@ def extract_velocity_case(
         (out / directory).mkdir(parents=True, exist_ok=True)
 
     height_over_rd = abs(rotor_z_m - ground_z_m) / disk_radius_m
-    case_id = make_case_id(l_over_d, disk_radius_m, height_over_rd)
+    source_folder = str(source_folder if source_folder is not None else case_path.name).strip().replace("\\", "/")
+    identity = repr((source_folder, rotor_spacing_m, rotor_diameter_m, rotor_z_m, ground_z_m, z_max_m, disk_loading, center_x, center_y))
+    suffix = hashlib.sha256(identity.encode("utf-8")).hexdigest()[:16]
+    case_id = make_case_id(l_over_d, disk_radius_m, height_over_rd) + "_ZRD_" + suffix
     np.savez_compressed(
         out / "inputs" / f"input_{case_id}.npz",
+        coordinate_system=COORDINATE_SYSTEM,
+        source_folder=source_folder,
+        z_max_m=np.float64(z_max_m),
         l_over_d=np.float32(l_over_d),
         rotor_spacing_m=np.float32(rotor_spacing_m),
         rotor_diameter_m=np.float32(rotor_diameter_m),
@@ -121,7 +134,7 @@ def extract_velocity_case(
         shape_ztheta=np.asarray((nz, ntheta), dtype=np.int32),
         theta_rad=theta.astype(np.float32),
         z_m=z_m.astype(np.float32),
-        s_over_rd=s_over_rd.astype(np.float32),
+        z_over_rd=z_over_rd.astype(np.float32),
     )
     for index, component in enumerate(("u", "v", "w")):
         np.save(out / f"targets_{component}" / f"{component}_{case_id}.npy", velocity_nd[..., index])
@@ -129,7 +142,7 @@ def extract_velocity_case(
     print(
         f"  [완료] {case_id} | surface(z,theta)={velocity_nd.shape[:2]} | "
         f"r={CYLINDER_RADIUS_OVER_RD:.1f}R_D={cylinder_radius_m:.4f} m | "
-        f"rotor_z={rotor_z_m:.4f} m -> ground_z={ground_z_m:.4f} m"
+        f"ground_z={ground_z_m:.4f} m -> mesh z_max={z_max_m:.4f} m"
     )
 
 
@@ -137,7 +150,7 @@ def main():
     parser = argparse.ArgumentParser(description="Extract and nondimensionalize OpenFOAM velocity fields")
     parser.add_argument("--csv", type=Path, default=Path("cases.csv"))
     parser.add_argument("--data-root", type=Path, help="Root for relative CSV folder values (default: CSV directory)")
-    parser.add_argument("--output-root", type=Path, default=Path("dataset_nd"))
+    parser.add_argument("--output-root", type=Path, default=Path("dataset_zrd"))
     args = parser.parse_args()
     csv_path = args.csv.expanduser().resolve()
     data_root = args.data_root.expanduser().resolve() if args.data_root else csv_path.parent
@@ -173,6 +186,7 @@ def main():
                 ground_z_m=ground_z,
                 center_x=center_x,
                 center_y=center_y,
+                source_folder=folder,
             )
         except Exception as exc:
             print(f"  [에러] {row.get('folder')}: {exc}")

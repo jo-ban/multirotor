@@ -8,11 +8,16 @@ import torch
 from data_utils_cylindrical import (
     DEFAULT_SHAPE_ZTHETA,
     TARGET_SCALE,
+    COORDINATE_SYSTEM,
+    INPUT_CHANNELS,
+    validate_checkpoint,
+    plot_extent,
     make_input_surface,
     outer_radius_square_quadrotor,
 )
 from model_cylindrical import CylindricalUNet2D
 from normalization import dimensional_velocity
+from plot_hover import attach_velocity_hover
 
 
 MODEL_PATHS = {c: Path(f"rotor_unet_cyl2d_{c}.pth") for c in ("u", "v", "w")}
@@ -23,8 +28,9 @@ def load_component_model(component, device, model_dir=None):
     if not path.exists():
         raise FileNotFoundError(f"{path}가 없습니다. train_nd.py로 먼저 학습하세요.")
     checkpoint = torch.load(path, map_location=device)
+    validate_checkpoint(checkpoint)
     model = CylindricalUNet2D(
-        in_channels=int(checkpoint.get("in_channels", 5)),
+        in_channels=4,
         out_channels=1,
         base_channels=int(checkpoint.get("base_channels", 16)),
     ).to(device)
@@ -39,13 +45,27 @@ def predict_cylindrical_surface(
     disk_loading,
     rotor_z_m,
     ground_z_m,
+    z_max_m,
     shape_ztheta=DEFAULT_SHAPE_ZTHETA,
     save_path="prediction_cylinder_r2RD.npz",
     show_plot=True,
     model_dir=None,
     plot_path=None,
+    backend="TkAgg",
 ):
     """L과 D로 외접반경 R_D를 계산하고 r=2R_D 원통면의 U/V/W를 예측한다."""
+    if show_plot:
+        try:
+            plt.switch_backend(backend)
+            probe = plt.figure()
+            plt.close(probe)
+        except (ImportError, RuntimeError) as exc:
+            raise RuntimeError(
+                "Plot window unavailable. Install python3-tk and use a desktop/X11 session. "
+                "See README_LINUX.md. For numerical output only, use --no-show."
+            ) from exc
+    else:
+        plt.switch_backend("Agg")
     l_over_d = float(rotor_spacing_m) / float(rotor_diameter_m)
     disk_radius_m = outer_radius_square_quadrotor(rotor_spacing_m, rotor_diameter_m)
     height_m = abs(float(rotor_z_m) - float(ground_z_m))
@@ -53,7 +73,12 @@ def predict_cylindrical_surface(
         raise ValueError("rotor_z_m과 ground_z_m은 서로 달라야 합니다.")
     height_over_rd = height_m / disk_radius_m
     device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
-    input_surface = make_input_surface(l_over_d, height_over_rd, shape_ztheta)
+    if not np.isfinite([ground_z_m, z_max_m]).all() or z_max_m <= ground_z_m:
+        raise ValueError("Require finite --z-max > --ground-z")
+    nz, ntheta = map(int, shape_ztheta)
+    z_m = np.linspace(ground_z_m, z_max_m, nz, dtype=np.float32)
+    z_over_rd = z_m / disk_radius_m
+    input_surface = make_input_surface(l_over_d, z_over_rd, shape_ztheta)
     inputs = torch.from_numpy(input_surface[None, ...]).to(device)
 
     prediction_nd = {}
@@ -78,8 +103,6 @@ def predict_cylindrical_surface(
     nz, ntheta = map(int, shape_ztheta)
     theta_rad = np.linspace(0.0, 2.0 * np.pi, ntheta, endpoint=False, dtype=np.float32)
     theta_deg = np.rad2deg(theta_rad).astype(np.float32)
-    s_over_rd = np.linspace(0.0, height_over_rd, nz, dtype=np.float32)
-    z_m = np.linspace(rotor_z_m, ground_z_m, nz, dtype=np.float32)
 
     # 후처리 편의를 위해 원통좌표 속도도 함께 저장한다.
     cos_theta = np.cos(theta_rad)[None, :]
@@ -97,7 +120,10 @@ def predict_cylindrical_surface(
         tangential_mps=tangential.astype(np.float32),
         magnitude_mps=magnitude,
         theta_deg=theta_deg,
-        s_over_rd=s_over_rd,
+        coordinate_system=COORDINATE_SYSTEM,
+        input_channels=np.asarray(INPUT_CHANNELS),
+        z_over_rd=z_over_rd,
+        z_max_m=np.float64(z_max_m),
         z_m=z_m,
         rotor_z_m=np.float32(rotor_z_m),
         ground_z_m=np.float32(ground_z_m),
@@ -113,17 +139,20 @@ def predict_cylindrical_surface(
     print(f"r=2R_D 원통 표면 예측 결과 저장: {save_path}")
 
     if show_plot or plot_path is not None:
-        extent = (0.0, 360.0, 0.0, height_over_rd)
+        extent = plot_extent(theta_deg, z_m)
         fig, axes = plt.subplots(2, 2, figsize=(13, 8))
+        images = []
         for ax, data, title in zip(
             axes.flat,
             (prediction["u"], prediction["v"], prediction["w"], magnitude),
             ("U", "V", "W", "Magnitude"),
         ):
             image = ax.imshow(data, origin="lower", extent=extent, aspect="auto", cmap="turbo")
+            images.append(image)
             ax.set_title(title)
             ax.set_xlabel("azimuth theta [deg]")
-            ax.set_ylabel("s/R_D (rotor to ground)")
+            ax.set_ylabel("z [m]")
+            ax.set_ylim(float(z_m[0]), float(z_m[-1]))
             fig.colorbar(image, ax=ax, label="m/s")
         plt.suptitle(f"Cylinder r=2R_D prediction | L/D={l_over_d:.3f}")
         plt.tight_layout()
@@ -131,7 +160,9 @@ def predict_cylindrical_surface(
             Path(plot_path).parent.mkdir(parents=True, exist_ok=True)
             fig.savefig(plot_path, dpi=150)
         if show_plot:
-            plt.show()
+            attach_velocity_hover(fig, images, {**prediction, "magnitude": magnitude},
+                                  theta_deg, z_m)
+            plt.show(block=True)
         plt.close(fig)
 
     return prediction["u"], prediction["v"], prediction["w"]
@@ -146,7 +177,11 @@ if __name__ == "__main__":
     parser.add_argument("--disk-loading", type=float, default=153.22)
     parser.add_argument("--rotor-z", type=float, default=2.0)
     parser.add_argument("--ground-z", type=float, default=0.0)
+    parser.add_argument("--z-max", type=float, required=True, help="Mesh maximum z [m]; use the value reported by extraction")
     parser.add_argument("--no-show", action="store_true")
+    parser.add_argument("--backend", default="TkAgg", choices=("TkAgg", "QtAgg"),
+                        help="Interactive GUI backend (default: TkAgg)")
+    parser.add_argument("--plot-output", type=Path, help="Optional plot file; no PNG is saved by default")
     args = parser.parse_args()
     predict_cylindrical_surface(
         rotor_spacing_m=args.rotor_spacing,
@@ -154,9 +189,11 @@ if __name__ == "__main__":
         disk_loading=args.disk_loading,
         rotor_z_m=args.rotor_z,
         ground_z_m=args.ground_z,
+        z_max_m=args.z_max,
         shape_ztheta=(256, 256),
         save_path=args.output,
         model_dir=args.model_dir,
         show_plot=not args.no_show,
-        plot_path=args.output.with_suffix(".png"),
+        plot_path=args.plot_output,
+        backend=args.backend,
     )

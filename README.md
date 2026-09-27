@@ -38,11 +38,22 @@ Windows의 `C:\...` 경로는 Colab에서 사용할 수 없습니다. `001` 같�
 ```bash
 python work_multirotor/extract_nd.py --csv /content/raw/cases.csv --data-root /content/raw --output-root /content/dataset_nd
 python work_multirotor/train_nd.py --csv /content/raw/cases.csv --data-root /content/dataset_nd --model-dir /content/models --epochs 100
-python work_multirotor/predict_nd.py --model-dir /content/models --output /content/results/prediction.npz --no-show
+python work_multirotor/predict_nd.py --model-dir /content/models --output /content/results/prediction.npz --z-max 3.0 --no-show --plot-output /content/results/prediction.png
 python work_multirotor/evaluate_error.py --csv /content/raw/cases.csv --data-root /content/dataset_nd --model-dir /content/models --output-dir /content/results/evaluation --no-show
 ```
 
 `predict_nd.py`의 물리 조건은 `--rotor-spacing`, `--rotor-diameter`, `--disk-loading`,
-`--rotor-z`, `--ground-z`로 전달합니다. `--help`로 각 스크립트의 옵션을 확인하세요.
+`--rotor-z`, `--ground-z`, `--z-max`로 전달합니다. `--help`로 각 스크립트의 옵션을 확인하세요.
 평가는 `type=V` 케이스가 있을 때 실행합니다. 해당 케이스는 학습에서 제외됩니다.
-모델은 기존과 동일하게 5채널 입력의 원통표면 U-Net을 사용합니다.
+모델 입력은 **L/D, sin(theta), cos(theta), z/R_D의 4채널**입니다.
+추출 범위는 `ground_z`부터 실제 메시 최대 z까지이며 z좌표는 아래에서 위로 증가합니다.
+`--z-max 3.0`은 예시이므로 추출 로그의 실제 메시 상단 값으로 변경하세요.
+기존 s/R_D 데이터 및 4·5채널 모델은 재사용하지 말고 재추출·재학습하세요.
+
+## Linux 터미널과 대화형 Plot
+
+`cd work_multirotor` 후 `bash rotor.sh setup`으로 설치합니다.
+`bash rotor.sh predict --ground-z -2 --rotor-z 0 --z-max 3`처럼 실행하면
+실제 z축 Plot과 마우스 속도 표시가 나타납니다(좌표는 예시).
+Tk 및 디스플레이 연결이 필요합니다. Colab에서는 `--no-show --plot-output ...`를 사용합니다.
+자세한 설치·실행 명령은 [Linux 안내](work_multirotor/README_LINUX.md)를 참고하세요.

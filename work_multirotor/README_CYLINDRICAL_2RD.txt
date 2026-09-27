@@ -1,69 +1,46 @@
-[멀티로터 r=2R_D 원통 표면 예측 버전]
+[멀티로터 원통 표면: 실제 z/R_D 4채널 버전]
 
-목표
-- 멀티로터 시스템 중심에서 반경 r=2R_D인 원통 옆면의 속도장을 추출합니다.
-- 4개의 동일한 로터가 정사각형으로 배치된 구성을 사용합니다.
-- L은 인접한 개별 로터 중심 사이 거리, D는 개별 로터 한 개의 직경입니다.
-- R_D는 4개 로터 전체(블레이드 끝 포함)를 감싸는 외접원의 반경입니다.
-- 코드가 R_D = L/sqrt(2) + D/2로 자동 계산합니다.
-- 추출 원통 반경은 2R_D = sqrt(2)L + D입니다.
-- 원통 표면을 가로=방위각 theta, 세로=s/R_D인 2D 평면으로 펼칩니다.
-- s는 로터면에서 지면 방향으로 잰 거리이며, s=0은 로터면입니다.
-- L/D를 케이스 변수로 사용하고 U, V, W를 각각 별도 2D U-Net으로 학습합니다.
+영역과 좌표
+- 정사각형 4로터의 외접반경: R_D = L/sqrt(2) + D/2.
+- 추출 원통 반경: 2R_D.
+- z 범위: cases.csv의 ground_z부터 internalMesh의 최대 z까지 자동 추출.
+- z는 OpenFOAM 실제 좌표이며 원점을 빼지 않습니다.
+- 행은 지면에서 메시 상단으로 증가, 열은 theta=0~360도(끝점 제외).
+- rotor_z는 물리 조건/메타데이터이며 추출 상한이 아닙니다.
+- 로터면이 z=0이면 음수 z의 지면은 그림 아래, 양수 z의 메시 상단은 그림 위입니다.
 
-출력 배열
-- shape: (Nz, Ntheta), 기본값 (256, 256)
-- 가로축: theta = 0~360 deg (360도 끝점은 중복 저장하지 않음)
-- 세로축: s/R_D=0~H/R_D (로터면에서 지면까지)
-- U, V, W는 유도속도 Vi로 무차원화되어 저장됩니다.
-- 케이스 ID에는 L/D, R_D, H/R_D가 포함되어 높이가 다른 데이터가 덮어써지지 않습니다.
-
-네트워크 입력 채널
+입력 shape: (4, Nz, Ntheta), 기본 해상도 (256, 256)
 - CH0: L/D
-- CH1: H/R_D (로터면과 지면 사이 거리/외접반경)
-- CH2: sin(theta)
-- CH3: cos(theta)
-- CH4: s/R_D (로터면에서 지면 방향으로 잰 거리)
+- CH1: sin(theta)
+- CH2: cos(theta)
+- CH3: z/R_D
+- H/R_D 별도 상수 채널은 없습니다.
 
-주기 경계
-- theta=0도와 360도는 같은 위치이므로 합성곱의 theta 방향에 circular padding을 적용했습니다.
+CSV: folder,L,D,rotor_z,ground_z,load,type,center_x,center_y
+- L, D, rotor_z, ground_z, center_x/y 단위 m; load 단위 N/m².
+- type=V는 검증 데이터로 학습에서 제외.
+- center_x/y 생략 시 0. folder에는 Linux 경로를 사용.
+- z_max를 CSV에 입력할 필요 없음. 추출에서 mesh.bounds[5]를 읽음.
 
-cases.csv 필수 열
-- folder: OpenFOAM 케이스 폴더
-- L: 인접한 개별 로터 중심 사이 거리[m]
-  (spacing, rotor_spacing, rotor_spacing_m도 허용)
-- D: 개별 로터 한 개의 직경[m]
-  (diameter, rotor_diameter, rotor_diameter_m도 허용)
-- rotor_z: OpenFOAM 좌표계에서 로터면의 실제 z 좌표[m]
-- ground_z: OpenFOAM 좌표계에서 지면의 실제 z 좌표[m]
-- L/D와 R_D는 L, D로부터 코드가 자동 계산합니다.
-- load: 디스크 로딩[N/m^2] (disk_loading, DL도 허용)
+출력
+- inputs/*.npz: 실제 z_m, z_over_rd, z_max_m, 좌표 버전 및 케이스 메타데이터.
+- targets_u/v/w/*.npy: 무차원 속도 배열. 행 순서는 z_m과 동일.
+- Plot 세로축: z [m]. 예측 커서: theta, z, U/V/W, 속도 크기[m/s].
+- 속도 W의 부호를 뒤집지 않음. 실제 z좌표에 맞는 행 배치만 사용.
 
-cases.csv 선택 열
-- type: V이면 검증용으로 분리
-- center_x, center_y: 멀티로터 시스템 중심[m], 생략 시 (0, 0)
+실행: README_LINUX.md 참고
+1. bash rotor.sh setup
+2. bash rotor.sh extract --data-root /data/OpenFOAM
+3. bash rotor.sh visualize
+4. bash rotor.sh train --epochs 100
+5. bash rotor.sh evaluate
+6. bash rotor.sh predict --rotor-z 0 --ground-z -2 --z-max 3
+마지막 명령의 좌표는 예시입니다. 실제 추출 로그에 나타난 메시 상단 값을 쓰세요.
 
-예시
-folder,L,D,rotor_z,ground_z,load,type,center_x,center_y
-case_100,1.00,1.00,2.00,0.00,153.22,T,0.0,0.0
-case_125,1.25,1.00,2.00,0.00,153.22,T,0.0,0.0
-case_150,1.50,1.00,2.00,0.00,153.22,V,0.0,0.0
-
-설정
-- extract_nd.py의 CYLINDER_RADIUS_OVER_RD = 2.0
-- extract_nd.py의 RESOLUTION_Z_THETA = (256, 256)
-- 높이 범위는 cases.csv의 rotor_z에서 ground_z까지 자동 설정됩니다.
-- H=|rotor_z-ground_z|, 세로축 범위는 s/R_D=0~H/R_D입니다.
-
-실행 순서
-1. python extract_nd.py
-2. python visualize_cylindrical_data.py   (선택)
-3. python train_nd.py
-4. python evaluate_error.py               (type=V가 있을 때)
-5. python predict_nd.py
-
-주의
-- 로터 4개, 정사각형 배치, 회전 방향, 직경, 디스크 로딩과 계산 조건은 고정하고 L/D만 바꾸는 구성을 전제로 합니다.
-- 원통 r=2R_D가 OpenFOAM 계산영역 안에 전부 포함되어야 합니다.
-- 기존 3D 모델 파일과 호환되지 않으므로 새로 학습해야 합니다.
-- 기존 4채널 원통 모델과도 호환되지 않으며 5채널 모델을 새로 학습해야 합니다.
+이전 버전에서 전환
+- 기존 s/R_D의 4채널과 H/R_D 포함 5채널 가중치 모두 사용할 수 없음.
+- 새 범위로 재추출 및 재학습 필요. 기본 경로 dataset_zrd, models_zrd.
+- coordinate_system=absolute_z_over_rd_v1로 데이터/가중치의 의미를 검사.
+- 원통 전체가 유효한 CFD 영역에 들어가야 함. 영역 밖 샘플은 오류 처리.
+- 이 4채널은 로터 위치/높이를 별도 조건으로 입력하지 않음. 다른 물리 조건을 무작정
+  혼합해 학습하지 말고, 공통 원점과 일관된 로터 배치 조건을 사용하세요.
