@@ -103,6 +103,11 @@ class ColabPathsTest(unittest.TestCase):
                 self.assertEqual(float(prediction['z_m'][-1]), 15)
                 self.assertAlmostEqual(float(prediction['disk_radius_m']), 9.3101751)
                 self.assertAlmostEqual(float(prediction['rotor_diameter_m']), 5.7069642, places=5)
+                for component in ('u_r_mps', 'u_theta_mps', 'u_z_mps'):
+                    self.assertEqual(prediction[component].shape, (256, 256))
+                    self.assertTrue(np.isfinite(prediction[component]).all())
+                self.assertEqual(str(prediction['velocity_coordinate_system']),
+                                 'cylindrical_z_axis')
             self.assertTrue((results / 'prediction.png').is_file())
             self.run_script(root, 'visualize_cylindrical_data.py', '--data-root', dataset,
                             '--output-dir', results / 'visualize')

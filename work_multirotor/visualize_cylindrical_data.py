@@ -9,7 +9,11 @@ os.environ["MPLBACKEND"] = "Agg"
 import matplotlib.pyplot as plt
 import numpy as np
 
-from data_utils_cylindrical import load_case_input, plot_extent
+from data_utils_cylindrical import (
+    cartesian_to_cylindrical_velocity,
+    load_case_input,
+    plot_extent,
+)
 
 
 DATA_ROOT = Path("./dataset_zrd")
@@ -28,14 +32,26 @@ def visualize_extracted_data(case_id=None, data_root=DATA_ROOT, output_dir=Path(
         c: np.load(data_root / f"targets_{c}" / f"{c}_{case_id}.npy")
         for c in ("u", "v", "w")
     }
-    fields["magnitude"] = np.sqrt(fields["u"] ** 2 + fields["v"] ** 2 + fields["w"] ** 2)
+    theta_rad = np.linspace(0, 2 * np.pi, meta["shape_ztheta"][1], endpoint=False)
+    cylindrical = cartesian_to_cylindrical_velocity(
+        fields["u"], fields["v"], fields["w"], theta_rad
+    )
+    cylindrical["magnitude"] = np.sqrt(
+        cylindrical["u_r"] ** 2
+        + cylindrical["u_theta"] ** 2
+        + cylindrical["u_z"] ** 2
+    )
 
     theta_deg = np.linspace(0, 360, meta["shape_ztheta"][1], endpoint=False)
     extent = plot_extent(theta_deg, meta["z_m"])
     fig, axes = plt.subplots(2, 2, figsize=(13, 8))
-    for ax, key in zip(axes.flat, ("u", "v", "w", "magnitude")):
-        image = ax.imshow(fields[key], origin="lower", extent=extent, aspect="auto", cmap="turbo")
-        ax.set_title(key.upper())
+    for ax, key, title in zip(
+        axes.flat,
+        ("u_r", "u_theta", "u_z", "magnitude"),
+        (r"$U_r$ (radial)", r"$U_\theta$ (azimuthal)", r"$U_z$ (axial)", "Magnitude"),
+    ):
+        image = ax.imshow(cylindrical[key], origin="lower", extent=extent, aspect="auto", cmap="turbo")
+        ax.set_title(title)
         ax.set_xlabel("azimuth theta [deg]")
         ax.set_ylabel("z [m]")
         ax.set_ylim(float(meta["z_m"][0]), float(meta["z_m"][-1]))

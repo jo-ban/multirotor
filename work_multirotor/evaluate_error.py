@@ -9,6 +9,7 @@ import torch
 from data_utils_cylindrical import (
     validation_ids_from_frame,
     TARGET_SCALE,
+    cartesian_to_cylindrical_velocity,
     validate_checkpoint,
     plot_extent,
     load_case_input,
@@ -65,15 +66,22 @@ def evaluate_case(case_id, device, show_plot=True, data_root=DATA_ROOT, model_di
     dl = meta["disk_loading"]
     cfd = {c: dimensional_velocity(cfd_nd[c], dl) for c in ("u", "v", "w")}
     ai = {c: dimensional_velocity(ai_nd[c], dl) for c in ("u", "v", "w")}
-    maes = {c: float(np.mean(np.abs(cfd[c] - ai[c]))) for c in ("u", "v", "w")}
+    theta_rad = np.linspace(0, 2 * np.pi, meta["shape_ztheta"][1], endpoint=False)
+    cfd_cyl = cartesian_to_cylindrical_velocity(cfd["u"], cfd["v"], cfd["w"], theta_rad)
+    ai_cyl = cartesian_to_cylindrical_velocity(ai["u"], ai["v"], ai["w"], theta_rad)
+    maes = {
+        c: float(np.mean(np.abs(cfd_cyl[c] - ai_cyl[c])))
+        for c in ("u_r", "u_theta", "u_z")
+    }
     magnitude_cfd = np.sqrt(cfd["u"] ** 2 + cfd["v"] ** 2 + cfd["w"] ** 2)
     magnitude_ai = np.sqrt(ai["u"] ** 2 + ai["v"] ** 2 + ai["w"] ** 2)
     magnitude_error = np.abs(magnitude_cfd - magnitude_ai)
     magnitude_mae = float(np.mean(magnitude_error))
 
     print(
-        f"{case_id} | U MAE={maes['u']:.5f} | V MAE={maes['v']:.5f} | "
-        f"W MAE={maes['w']:.5f} | |V| MAE={magnitude_mae:.5f} m/s"
+        f"{case_id} | U_r MAE={maes['u_r']:.5f} | "
+        f"U_theta MAE={maes['u_theta']:.5f} | U_z MAE={maes['u_z']:.5f} | "
+        f"|U| MAE={magnitude_mae:.5f} m/s"
     )
 
     if show_plot or output_dir is not None:

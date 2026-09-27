@@ -110,7 +110,8 @@ case_id 열에 입력 NPZ 파일명의 input_와 .npz를 뺀 ID를 지정하세�
 ## Plot 라이브러리와 원격 실행
 
 Matplotlib의 imshow, annotate, mpl_connect('motion_notify_event'), show를 사용합니다.
-마우스를 올리면 theta, 실제 z[m], U/V/W와 속도 크기[m/s]가 표시됩니다.
+마우스를 올리면 theta, 실제 z[m], 원통좌표 속도 U_r/U_theta/U_z와 속도 크기[m/s]가 표시됩니다.
+예측 NPZ의 `u_r_mps`, `u_theta_mps`, `u_z_mps`는 각각 반경, 방위각, z축 방향 속도입니다. 기존 `u_mps`, `v_mps`, `w_mps`는 후방 호환을 위해 함께 저장됩니다.
 기본 GUI 백엔드는 TkAgg입니다. python3-tk는 시스템 패키지이며 pip install tkinter를 사용하지 않습니다.
 mplcursors는 필요 없습니다. Qt를 쓰려면 .venv/bin/python -m pip install PyQt6 후 --backend QtAgg를 추가하세요.
 

@@ -12,6 +12,7 @@ from data_utils_cylindrical import (
     INPUT_CHANNELS,
     validate_checkpoint,
     plot_extent,
+    cartesian_to_cylindrical_velocity,
     make_input_surface,
     FIXED_RD_M,
     geometry_from_rd_ratio,
@@ -54,7 +55,7 @@ def predict_cylindrical_surface(
     plot_path=None,
     backend="TkAgg",
 ):
-    """고정 RD와 L/D로 형상을 계산하고 r=2RD 원통면의 U/V/W를 예측한다."""
+    """고정 RD와 L/D로 형상을 계산하고 r=2RD 원통면의 U_r/U_theta/U_z를 예측한다."""
     if show_plot:
         try:
             plt.switch_backend(backend)
@@ -104,11 +105,13 @@ def predict_cylindrical_surface(
     theta_rad = np.linspace(0.0, 2.0 * np.pi, ntheta, endpoint=False, dtype=np.float32)
     theta_deg = np.rad2deg(theta_rad).astype(np.float32)
 
-    # 후처리 편의를 위해 원통좌표 속도도 함께 저장한다.
-    cos_theta = np.cos(theta_rad)[None, :]
-    sin_theta = np.sin(theta_rad)[None, :]
-    radial = prediction["u"] * cos_theta + prediction["v"] * sin_theta
-    tangential = -prediction["u"] * sin_theta + prediction["v"] * cos_theta
+    # 모델은 Cartesian (u, v, w)를 예측하므로, 축이 z인 원통좌표로 변환한다.
+    cylindrical = {
+        key: value.astype(np.float32)
+        for key, value in cartesian_to_cylindrical_velocity(
+            prediction["u"], prediction["v"], prediction["w"], theta_rad
+        ).items()
+    }
 
     Path(save_path).parent.mkdir(parents=True, exist_ok=True)
     np.savez_compressed(
@@ -116,11 +119,15 @@ def predict_cylindrical_surface(
         u_mps=prediction["u"],
         v_mps=prediction["v"],
         w_mps=prediction["w"],
-        radial_mps=radial.astype(np.float32),
-        tangential_mps=tangential.astype(np.float32),
+        u_r_mps=cylindrical["u_r"],
+        u_theta_mps=cylindrical["u_theta"],
+        u_z_mps=cylindrical["u_z"],
+        radial_mps=cylindrical["u_r"],
+        tangential_mps=cylindrical["u_theta"],
         magnitude_mps=magnitude,
         theta_deg=theta_deg,
         coordinate_system=COORDINATE_SYSTEM,
+        velocity_coordinate_system="cylindrical_z_axis",
         input_channels=np.asarray(INPUT_CHANNELS),
         z_over_rd=z_over_rd,
         z_max_m=np.float64(z_max_m),
@@ -144,8 +151,8 @@ def predict_cylindrical_surface(
         images = []
         for ax, data, title in zip(
             axes.flat,
-            (prediction["u"], prediction["v"], prediction["w"], magnitude),
-            ("U", "V", "W", "Magnitude"),
+            (cylindrical["u_r"], cylindrical["u_theta"], cylindrical["u_z"], magnitude),
+            (r"$U_r$ (radial)", r"$U_\theta$ (azimuthal)", r"$U_z$ (axial)", "Magnitude"),
         ):
             image = ax.imshow(data, origin="lower", extent=extent, aspect="auto", cmap="turbo")
             images.append(image)
@@ -160,12 +167,12 @@ def predict_cylindrical_surface(
             Path(plot_path).parent.mkdir(parents=True, exist_ok=True)
             fig.savefig(plot_path, dpi=150)
         if show_plot:
-            attach_velocity_hover(fig, images, {**prediction, "magnitude": magnitude},
+            attach_velocity_hover(fig, images, {**cylindrical, "magnitude": magnitude},
                                   theta_deg, z_m)
             plt.show(block=True)
         plt.close(fig)
 
-    return prediction["u"], prediction["v"], prediction["w"]
+    return cylindrical["u_r"], cylindrical["u_theta"], cylindrical["u_z"]
 
 
 if __name__ == "__main__":

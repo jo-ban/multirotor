@@ -70,3 +70,8 @@ CSV의 나머지 물리값을 학습 단계에서 다시 적용하지 않습니�
 실제 z축 Plot과 마우스 속도 표시가 나타납니다. <실제값>은 숫자로 바꿔야 합니다.
 Tk 및 디스플레이 연결이 필요합니다. Colab에서는 `--no-show --plot-output ...`를 사용합니다.
 자세한 설치·실행 명령은 [Linux 안내](work_multirotor/README_LINUX.md)를 참고하세요.
+
+예측 그래프와 추출 데이터 확인 그래프는 속도를 원통좌표
+`U_r`(반경), `U_theta`(방위각), `U_z`(축) 성분으로 표시합니다. 예측 NPZ에는
+`u_r_mps`, `u_theta_mps`, `u_z_mps`가 저장되며, 기존 코드 호환을 위해
+Cartesian `u_mps`, `v_mps`, `w_mps`도 함께 유지됩니다.

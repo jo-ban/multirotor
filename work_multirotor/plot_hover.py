@@ -14,7 +14,7 @@ def grid_index(x, y, extent, shape):
 
 
 def attach_velocity_hover(fig, images, fields, theta_deg, z_m):
-    """Display all four velocities for the cell under the mouse, without extra packages."""
+    """Display cylindrical velocity components for the cell under the mouse."""
     annotations = {}
     for image in images:
         ax = image.axes
@@ -25,13 +25,15 @@ def attach_velocity_hover(fig, images, fields, theta_deg, z_m):
         annotations[ax] = (image, note)
 
     def text_at(image, x, y):
-        index = grid_index(x, y, image.get_extent(), fields['u'].shape)
+        index = grid_index(x, y, image.get_extent(), fields['u_r'].shape)
         if index is None:
             return None
         row, col = index
         return (f'theta={theta_deg[col]:.2f} deg, z={z_m[row]:.4f} m\n'
-                f'U={fields["u"][row, col]:.4f}, V={fields["v"][row, col]:.4f}\n'
-                f'W={fields["w"][row, col]:.4f}, |V|={fields["magnitude"][row, col]:.4f} m/s')
+                f'U_r={fields["u_r"][row, col]:.4f}, '
+                f'U_theta={fields["u_theta"][row, col]:.4f}\n'
+                f'U_z={fields["u_z"][row, col]:.4f}, '
+                f'|U|={fields["magnitude"][row, col]:.4f} m/s')
 
     for image in images:
         image.axes.format_coord = lambda x, y, im=image: (text_at(im, x, y) or '').replace('\n', '  ')

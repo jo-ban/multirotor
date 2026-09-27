@@ -46,6 +46,26 @@ def geometry_from_row(row):
     return rd, ratio, spacing, diameter
 
 
+def cartesian_to_cylindrical_velocity(u, v, w, theta_rad):
+    """Convert Cartesian velocity components to cylindrical components about z."""
+    u = np.asarray(u)
+    v = np.asarray(v)
+    w = np.asarray(w)
+    theta_rad = np.asarray(theta_rad)
+    if u.shape != v.shape or u.shape != w.shape:
+        raise ValueError("u, v and w must have identical shapes")
+    if theta_rad.ndim != 1 or u.ndim < 1 or u.shape[-1] != theta_rad.size:
+        raise ValueError("theta_rad must be one-dimensional and match the last velocity axis")
+    angle_shape = (1,) * (u.ndim - 1) + (theta_rad.size,)
+    cos_theta = np.cos(theta_rad).reshape(angle_shape)
+    sin_theta = np.sin(theta_rad).reshape(angle_shape)
+    return {
+        "u_r": u * cos_theta + v * sin_theta,
+        "u_theta": -u * sin_theta + v * cos_theta,
+        "u_z": w,
+    }
+
+
 def _first_numeric(row, keys, default=None):
     for key in keys:
         if key in row.index and not np.isnan(row[key]):
