@@ -167,8 +167,13 @@ def main():
     radii = [geometry_from_row(row)[0] for _, row in dataframe.iterrows()]
     if not np.allclose(radii, radii[0], rtol=1e-6, atol=1e-7):
         raise ValueError("All cases in this fixed-RD extraction must use the same RD")
+    folders = dataframe['folder'].fillna('').str.strip().str.replace('\\', '/', regex=False)
+    if (folders == '').any() or folders.duplicated().any():
+        raise ValueError('CSV folder contains empty or duplicate cases')
+    print(f'CSV 케이스: {len(dataframe)}개 | {csv_path}', flush=True)
     failures = []
-    for _, row in dataframe.iterrows():
+    for number, (_, row) in enumerate(dataframe.iterrows(), start=1):
+        print(f'[{number}/{len(dataframe)}] 추출 시작: {row["folder"]}', flush=True)
         try:
             folder = _folder_name(row["folder"]).strip()
             if not folder or pd.isna(row["folder"]):
@@ -198,6 +203,7 @@ def main():
             failures.append(str(row.get("folder")))
     if failures:
         raise RuntimeError(f"Extraction failed for {len(failures)} case(s): {', '.join(failures)}")
+    print(f'전체 추출 완료: {len(dataframe)}/{len(dataframe)}개', flush=True)
 
 
 if __name__ == "__main__":
