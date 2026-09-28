@@ -16,7 +16,7 @@ Usage: bash rotor.sh COMMAND [OPTIONS]
   help        Show this help
 Example: bash rotor.sh train --epochs 100 --batch-size 4
 Example: bash rotor.sh extract --data-root /data/OpenFOAM
-Prediction: bash rotor.sh predict --rd 9.3101751 --l-over-d 1.6 --ground-z <actual> --z-max <actual> --disk-loading <actual>
+Prediction: bash rotor.sh predict --rd 9.3101751 --l-over-d 1.6 --ground-z <actual> --z-max <actual>
 Command options: bash rotor.sh train --help
 Relative option paths are relative to your current terminal directory.
 Defaults point to the directory containing rotor.sh.

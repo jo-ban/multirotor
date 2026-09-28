@@ -8,6 +8,17 @@ INPUT_CHANNELS = ("L/D", "sin(theta)", "cos(theta)", "z/R_D")
 TARGET_SCALE = 100.0
 DEFAULT_SHAPE_ZTHETA = (256, 256)
 FIXED_RD_M = 9.3101751
+TOTAL_THRUST_N = 30000.0
+ROTOR_COUNT = 4
+
+
+def disk_loading_from_diameter(rotor_diameter_m):
+    """DL [N/m²]: equal thrust on four identical rotor disks, total 30,000 N."""
+    diameter = float(rotor_diameter_m)
+    if not np.isfinite(diameter) or diameter <= 0:
+        raise ValueError("Rotor diameter must be finite and positive")
+    rotor_area = np.pi * (diameter / 2.0) ** 2
+    return (TOTAL_THRUST_N / ROTOR_COUNT) / rotor_area
 
 
 def geometry_from_rd_ratio(rd_m, l_over_d):
@@ -109,8 +120,8 @@ def disk_radius_from_row(row):
 
 
 def disk_loading_from_row(row):
-    # 속도 무차원화/복원에만 사용한다. 네트워크 입력변수에는 포함하지 않는다.
-    return _first_numeric(row, ("load", "disk_loading", "DL"))
+    # Legacy load/disk_loading/DL columns are ignored under fixed total thrust.
+    return disk_loading_from_diameter(rotor_diameter_from_row(row))
 
 
 def center_from_row(row):

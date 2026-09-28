@@ -16,6 +16,7 @@ from data_utils_cylindrical import (
     make_input_surface,
     FIXED_RD_M,
     geometry_from_rd_ratio,
+    disk_loading_from_diameter,
 )
 from model_cylindrical import CylindricalUNet2D
 from normalization import dimensional_velocity
@@ -69,6 +70,9 @@ def predict_cylindrical_surface(
     else:
         plt.switch_backend("Agg")
     rotor_spacing_m, rotor_diameter_m = geometry_from_rd_ratio(disk_radius_m, l_over_d)
+    # Recompute for the requested geometry, never reuse a reference case's DL.
+    disk_loading = disk_loading_from_diameter(rotor_diameter_m)
+    print(f"Total thrust=30000 N | D={rotor_diameter_m:.4f} m | DL={disk_loading:.4f} N/m^2")
     height_m = abs(float(rotor_z_m) - float(ground_z_m))
     if height_m <= 0:
         raise ValueError("rotor_z_m과 ground_z_m은 서로 달라야 합니다.")
@@ -187,7 +191,7 @@ if __name__ == "__main__":
     parser.add_argument("--output", type=Path, default=Path("prediction_cylinder_r2RD.npz"))
     parser.add_argument("--rd", type=float, default=FIXED_RD_M, help="Fixed outer radius RD [m] (default: 9.3101751)")
     parser.add_argument("--l-over-d", type=float, default=1.5, help="Rotor spacing / rotor diameter")
-    parser.add_argument("--disk-loading", type=float, required=True, help="Actual disk loading [N/m^2]")
+    parser.add_argument("--disk-loading", type=float, help="Deprecated, ignored: DL is calculated from D and total thrust 30000 N")
     parser.add_argument("--rotor-z", type=float, default=9.3101752)
     parser.add_argument("--ground-z", type=float, required=True, help="Actual ground z [m]")
     parser.add_argument("--z-max", type=float, required=True, help="Mesh maximum z [m]; use the value reported by extraction")

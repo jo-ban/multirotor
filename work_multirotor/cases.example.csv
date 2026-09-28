@@ -1,4 +1,4 @@
-folder,RD,L_over_D,rotor_z,ground_z,load,type,center_x,center_y
-cases/case01,9.3101751,1.5,9.3101752,,,T,0.0,0.0
-cases/case02,9.3101751,1.6,9.3101752,,,T,0.0,0.0
-cases/case03,9.3101751,1.7,9.3101752,,,V,0.0,0.0
+folder,RD,L_over_D,rotor_z,ground_z,type,center_x,center_y
+cases/case01,9.3101751,1.5,9.3101752,,T,0.0,0.0
+cases/case02,9.3101751,1.6,9.3101752,,T,0.0,0.0
+cases/case03,9.3101751,1.7,9.3101752,,V,0.0,0.0

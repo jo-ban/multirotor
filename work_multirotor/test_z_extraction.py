@@ -7,7 +7,7 @@ import numpy as np
 import pyvista as pv
 
 import extract_nd
-from data_utils_cylindrical import load_case_input, make_input_surface
+from data_utils_cylindrical import load_case_input, make_input_surface, disk_loading_from_diameter
 from normalization import nondim_velocity
 
 
@@ -30,7 +30,9 @@ class ZExtractionTest(TestCase):
             self.assertEqual(float(meta['z_m'][0]), -2)
             self.assertEqual(float(meta['z_m'][-1]), 3)
             target = np.load(next((out / 'targets_u').glob('*.npy')))
-            expected = nondim_velocity(meta['z_m'], 153.22)
+            expected_dl = disk_loading_from_diameter(meta['rotor_diameter_m'])
+            self.assertAlmostEqual(meta['disk_loading'] / expected_dl, 1.0, places=6)
+            expected = nondim_velocity(meta['z_m'], expected_dl)
             np.testing.assert_allclose(target[:, 0], expected, atol=1e-6)
             self.assertLess(target[0, 0], target[-1, 0])
             inputs = make_input_surface(meta['l_over_d'], meta['z_over_rd'], meta['shape_ztheta'])

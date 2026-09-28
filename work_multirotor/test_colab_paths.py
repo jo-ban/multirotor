@@ -61,9 +61,9 @@ class ColabPathsTest(unittest.TestCase):
             for folder in ('001', '002'):
                 make_case(raw / folder)
             csv = raw / 'case.csv'
-            csv.write_text('folder,RD,L_over_D,rotor_z,ground_z,load,type\n'
-                           '001,9.3101751,1.5,9.3101752,0,153.22,T\n'
-                           '002,9.3101751,1.6,9.3101752,0,153.22,V\n')
+            csv.write_text('folder,RD,L_over_D,rotor_z,ground_z,type\n'
+                           '001,9.3101751,1.5,9.3101752,0,T\n'
+                           '002,9.3101751,1.6,9.3101752,0,V\n')
             dataset, models, results = (root / n for n in ('dataset', 'models', 'results'))
             # Default data root is the CSV parent, even from an unrelated cwd.
             self.run_script(root, 'extract_nd.py', '--csv', csv, '--output-root', dataset)
@@ -78,7 +78,11 @@ class ColabPathsTest(unittest.TestCase):
                     self.assertTrue(np.all(np.diff(meta['z_m']) > 0))
                     np.testing.assert_allclose(meta['z_over_rd'], meta['z_m'] / meta['disk_radius_m'], rtol=1e-6)
                     self.assertNotIn('s_over_rd', meta.files)
-            np.testing.assert_allclose(np.load(targets[0]), 1 / np.sqrt(153.22 / 2.45), rtol=1e-5)
+                    diameter = float(meta['rotor_diameter_m'])
+                    expected_dl = 30000 / (np.pi * diameter ** 2)
+                    self.assertAlmostEqual(float(meta['disk_loading']) / expected_dl, 1, places=6)
+                    target = dataset / 'targets_u' / metadata.name.replace('input_', 'u_').replace('.npz', '.npy')
+                    np.testing.assert_allclose(np.load(target), 1 / np.sqrt(expected_dl / 2.45), rtol=1e-5)
             from train_nd import CylindricalSurfaceDataset
             self.assertEqual(len(CylindricalSurfaceDataset(dataset, 'u', csv)), 1)
             # Once extracted, CSV is only a validation identifier list.
@@ -94,7 +98,7 @@ class ColabPathsTest(unittest.TestCase):
             self.run_script(root, 'predict_nd.py', '--model-dir', models,
                             '--output', results / 'prediction.npz', '--no-show',
                             '--ground-z', 0, '--rotor-z', 9.3101752, '--z-max', 15,
-                            '--rd', 9.3101751, '--l-over-d', 1.6, '--disk-loading', 153.22,
+                            '--rd', 9.3101751, '--l-over-d', 1.6,
                             '--plot-output', results / 'prediction.png')
             with np.load(results / 'prediction.npz') as prediction:
                 self.assertEqual(prediction['u_mps'].shape, (256, 256))
@@ -103,6 +107,8 @@ class ColabPathsTest(unittest.TestCase):
                 self.assertEqual(float(prediction['z_m'][-1]), 15)
                 self.assertAlmostEqual(float(prediction['disk_radius_m']), 9.3101751)
                 self.assertAlmostEqual(float(prediction['rotor_diameter_m']), 5.7069642, places=5)
+                total = float(prediction['disk_loading']) * np.pi * float(prediction['rotor_diameter_m']) ** 2
+                self.assertAlmostEqual(total, 30000, delta=0.01)
                 for component in ('u_r_mps', 'u_theta_mps', 'u_z_mps'):
                     self.assertEqual(prediction[component].shape, (256, 256))
                     self.assertTrue(np.isfinite(prediction[component]).all())

@@ -10,6 +10,7 @@ from data_utils_cylindrical import (
     COORDINATE_SYSTEM,
     center_from_row,
     disk_loading_from_row,
+    disk_loading_from_diameter,
     make_case_id,
     geometry_from_row,
     geometry_from_rd_ratio,
@@ -59,6 +60,8 @@ def extract_velocity_case(
     source_folder=None,
 ):
     rotor_spacing_m, rotor_diameter_m = geometry_from_rd_ratio(disk_radius_m, l_over_d)
+    # Retain the legacy argument for callers, but always use fixed-total-thrust DL.
+    disk_loading = disk_loading_from_diameter(rotor_diameter_m)
 
     foam_file = case_path / f"{case_path.name}.foam"
     if not foam_file.exists():
@@ -139,7 +142,8 @@ def extract_velocity_case(
     print(
         f"  [완료] {case_id} | surface(z,theta)={velocity_nd.shape[:2]} | "
         f"r={CYLINDER_RADIUS_OVER_RD:.1f}R_D={cylinder_radius_m:.4f} m | "
-        f"ground_z={ground_z_m:.4f} m -> mesh z_max={z_max_m:.4f} m"
+        f"ground_z={ground_z_m:.4f} m -> mesh z_max={z_max_m:.4f} m | "
+        f"D={rotor_diameter_m:.4f} m | DL={disk_loading:.4f} N/m^2 (total thrust 30000 N)"
     )
 
 
