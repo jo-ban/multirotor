@@ -1,10 +1,7 @@
 import argparse
 from pathlib import Path
 
-import matplotlib.pyplot as plt
 import numpy as np
-import pandas as pd
-import torch
 
 from data_utils_cylindrical import (
     validation_ids_from_frame,
@@ -15,7 +12,6 @@ from data_utils_cylindrical import (
     load_case_input,
     make_input_surface,
 )
-from model_cylindrical import CylindricalUNet2D
 from normalization import dimensional_velocity
 
 
@@ -24,11 +20,16 @@ MODEL_PATHS = {c: Path(f"rotor_unet_cyl2d_{c}.pth") for c in ("u", "v", "w")}
 
 
 def validation_case_ids(csv_path="./cases.csv", data_root=DATA_ROOT):
+    import pandas as pd
+
     dataframe = pd.read_csv(csv_path, dtype={"folder": str})
     return validation_ids_from_frame(data_root, dataframe)
 
 
 def load_model(component, device, model_dir=None, expected_rd=None):
+    import torch
+    from model_cylindrical import CylindricalUNet2D
+
     path = MODEL_PATHS[component] if model_dir is None else Path(model_dir) / f"rotor_unet_cyl2d_{component}.pth"
     checkpoint = torch.load(path, map_location=device)
     validate_checkpoint(checkpoint, expected_rd)
@@ -43,6 +44,9 @@ def load_model(component, device, model_dir=None, expected_rd=None):
 
 
 def evaluate_case(case_id, device, show_plot=True, data_root=DATA_ROOT, model_dir=None, output_dir=None):
+    import matplotlib.pyplot as plt
+    import torch
+
     data_root = Path(data_root)
     meta = load_case_input(data_root / "inputs" / f"input_{case_id}.npz")
     input_array = make_input_surface(
@@ -140,6 +144,21 @@ def evaluate_case(case_id, device, show_plot=True, data_root=DATA_ROOT, model_di
     }
 
 
+def regenerate_html(output_dir):
+    """Read saved comparison arrays and overwrite only their HTML files."""
+    from visualize_validation import export_html
+
+    paths = sorted(Path(output_dir).glob("comparison_*.npz"))
+    if not paths:
+        raise FileNotFoundError(
+            f"No saved comparison_*.npz in {output_dir}; HTML-only regeneration requires existing evaluation results."
+        )
+    for path in paths:
+        output = path.with_suffix(".html")
+        export_html(path, output)
+        print(f"Comparison HTML saved: {output}")
+
+
 if __name__ == "__main__":
     parser = argparse.ArgumentParser(description="Evaluate validation cases")
     parser.add_argument("--csv", type=Path, default=Path("cases.csv"))
@@ -147,7 +166,15 @@ if __name__ == "__main__":
     parser.add_argument("--model-dir", type=Path, default=Path("."))
     parser.add_argument("--output-dir", type=Path, default=Path("."))
     parser.add_argument("--no-show", action="store_true")
+    parser.add_argument("--html-only", action="store_true",
+                        help="Regenerate only HTML from comparison_*.npz in --output-dir; no inference or other outputs")
     args = parser.parse_args()
+    if args.html_only:
+        regenerate_html(args.output_dir)
+        raise SystemExit(0)
+    import torch
+    import pandas as pd
+
     device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
     case_ids = validation_case_ids(args.csv, args.data_root)
     if not case_ids:
