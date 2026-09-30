@@ -48,9 +48,12 @@ def build_figure(theta_deg, z_m, radius_m, cfd, prediction, case_id="", view="3d
             or fields[0][0].shape != (heights.size, theta.size)):
         raise ValueError("Invalid cylinder coordinates or field shape")
     titles = []
-    for label, (_, _, error) in zip(LABELS, fields):
+    for label, (actual, _, error) in zip(LABELS, fields):
+        reference = float(np.mean(np.abs(actual)))
+        rate = (f"{100.0 * error.mean() / reference:.2f}%" if reference > 0
+                else "N/A (mean |CFD| = 0)")
         titles.extend((f"CFD · {label}", f"Prediction · {label}",
-                       f"Abs error · MAE={error.mean():.4f} m/s"))
+                       f"Abs error · MAE={error.mean():.4f} m/s<br>NMAE={rate}"))
     fig = make_subplots(rows=4, cols=3, specs=[[{"type": "scene" if view == "3d" else "xy"}
                                               for _ in range(3)] for _ in range(4)],
                         subplot_titles=titles, horizontal_spacing=0.08, vertical_spacing=0.07)
@@ -92,8 +95,9 @@ def build_figure(theta_deg, z_m, radius_m, cfd, prediction, case_id="", view="3d
     else:
         fig.update_xaxes(title_text="theta [deg]")
         fig.update_yaxes(title_text="z [m]")
-    fig.update_layout(title=f"{escape(str(case_id))} · CFD / prediction / absolute error · r={radius:.4f} m",
-                      template="plotly_white", height=1500, margin=dict(l=40, r=85, t=90, b=45),
+    fig.update_layout(title=(f"{escape(str(case_id))} · CFD / prediction / absolute error · r={radius:.4f} m"
+                             "<br><sup>NMAE (%) = MAE / mean |CFD| × 100 (full grid, per field)</sup>"),
+                      template="plotly_white", height=1500, margin=dict(l=40, r=85, t=120, b=45),
                       showlegend=False, uirevision="validation")
     return fig
 
