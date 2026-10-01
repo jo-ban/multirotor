@@ -4,6 +4,7 @@ from pathlib import Path
 
 import numpy as np
 import plotly.graph_objects as go
+from display_analysis import display_window
 
 
 FIELDS = {
@@ -28,6 +29,12 @@ def build_figure(path):
     for key in FIELDS:
         if data[key].shape != (heights.size, theta.size) or not np.isfinite(data[key]).all():
             raise ValueError(f"{key}: expected finite [z, theta] array")
+
+    rd = float(data.get("disk_radius_m", radius / 2))
+    mask, bounds = display_window(heights, rd)
+    heights = heights[mask]
+    for key in FIELDS:
+        data[key] = data[key][mask]
 
     # Repeat the first column at 360 degrees to close the display seam.
     angles, z = np.meshgrid(np.deg2rad(np.r_[theta, theta[0] + 360]), heights)
@@ -71,7 +78,7 @@ def build_figure(path):
     fig.update_layout(
         title="Cylinder velocity · r = 2R_D", template="plotly_white",
         margin=dict(l=20, r=30, t=110, b=45), height=760,
-        scene=dict(xaxis_title="x [m]", yaxis_title="y [m]", zaxis_title="z [m]",
+        scene=dict(zaxis_range=bounds, xaxis_title="x [m]", yaxis_title="y [m]", zaxis_title="z [m]",
                    aspectmode="data", dragmode="orbit", uirevision="cylinder",
                    camera=dict(eye=dict(x=1.6, y=1.6, z=0.9))),
         updatemenus=[dict(buttons=buttons, x=0, y=1.12, xanchor="left", yanchor="top")],

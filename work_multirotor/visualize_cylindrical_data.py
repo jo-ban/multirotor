@@ -54,7 +54,7 @@ def visualize_extracted_data(case_id=None, data_root=DATA_ROOT, output_dir=Path(
         ax.set_title(title)
         ax.set_xlabel("azimuth theta [deg]")
         ax.set_ylabel("z [m]")
-        ax.set_ylim(float(meta["z_m"][0]), float(meta["z_m"][-1]))
+        ax.set_ylim(float(meta["z_m"][0]), min(float(meta["z_m"][-1]), meta["disk_radius_m"]))
         fig.colorbar(image, ax=ax, label="V/Vi")
 
     plt.suptitle(

@@ -17,7 +17,7 @@ class ValidationViewerTests(unittest.TestCase):
 
     def test_components_errors_geometry_and_shared_scales(self):
         fig = build_figure(**self.args)
-        self.assertEqual(len(fig.data), 12)
+        self.assertEqual(len(fig.data), 16)  # 12 surfaces + 4 absolute maxima; rates are N/A
         for row in range(4):
             actual, predicted, error = fig.data[row * 3:row * 3 + 3]
             np.testing.assert_allclose(error.surfacecolor, row + 1)
@@ -69,7 +69,7 @@ class ValidationViewerTests(unittest.TestCase):
         shape = (128, 192)
         actual = {key: np.zeros(shape) for key in FIELDS}
         prediction = {key: np.ones(shape) for key in FIELDS}
-        fig = build_figure(np.linspace(0, 360, 192, endpoint=False), np.arange(128), 4,
+        fig = build_figure(np.linspace(0, 360, 192, endpoint=False), np.linspace(0, 2, 128), 4,
                            actual, prediction)
         self.assertEqual(fig.data[0].surfacecolor.shape, (64, 97))
         self.assertIn("MAE=1.0000", fig.layout.annotations[2].text)

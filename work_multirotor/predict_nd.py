@@ -169,7 +169,7 @@ def predict_cylindrical_surface(
             ax.set_title(title)
             ax.set_xlabel("azimuth theta [deg]")
             ax.set_ylabel("z [m]")
-            ax.set_ylim(float(z_m[0]), float(z_m[-1]))
+            ax.set_ylim(float(z_m[0]), min(float(z_m[-1]), float(disk_radius_m)))
             fig.colorbar(image, ax=ax, label="m/s")
         plt.suptitle(f"Cylinder r=2R_D prediction | L/D={l_over_d:.3f}")
         plt.tight_layout()
