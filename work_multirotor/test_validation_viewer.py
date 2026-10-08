@@ -125,6 +125,20 @@ class ValidationViewerTests(unittest.TestCase):
         self.assertIn("Plotly.newPlot", html)
         self.assertGreater(len(html), 1_000_000)
 
+    def test_bundled_sa_export(self):
+        archive = io.BytesIO()
+        payload = dict(theta_deg=self.args["theta_deg"], z_m=self.args["z_m"],
+                       cylinder_radius_m=4, disk_radius_m=2, case_id="synthetic",
+                       **{f"cfd_{k}": v for k, v in self.cfd.items()},
+                       **{f"prediction_{k}": v for k, v in self.prediction.items()})
+        sa = {**payload, "cylinder_radius_m": 5}
+        np.savez_compressed(archive, **payload, **{f"sa_{k}": v for k, v in sa.items()})
+        archive.seek(0)
+        with patch("pathlib.Path.mkdir"), patch("plotly.graph_objects.Figure.write_html"):
+            fig = export_html(archive, "comparison.html")
+        self.assertEqual(len(fig.frames), 8)
+        self.assertEqual(fig.layout.updatemenus[0].buttons[1].label, "SA")
+
     def test_display_sampling_does_not_change_full_grid_mae(self):
         shape = (128, 192)
         actual = {key: np.zeros(shape) for key in FIELDS}

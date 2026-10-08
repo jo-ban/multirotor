@@ -6,6 +6,8 @@ import numpy as np
 from data_utils_cylindrical import (
     validation_ids_from_frame,
     TARGET_SCALE,
+    CYLINDER_RADIUS_OVER_RD,
+    SA_RADIUS_OVER_RD,
     cartesian_to_cylindrical_velocity,
     validate_checkpoint,
     load_case_input,
@@ -25,13 +27,14 @@ def validation_case_ids(csv_path="./cases.csv", data_root=DATA_ROOT):
     return validation_ids_from_frame(data_root, dataframe)
 
 
-def load_model(component, device, model_dir=None, expected_rd=None):
+def load_model(component, device, model_dir=None, expected_rd=None,
+               expected_radius_over_rd=CYLINDER_RADIUS_OVER_RD):
     import torch
     from model_cylindrical import CylindricalUNet2D
 
     path = MODEL_PATHS[component] if model_dir is None else Path(model_dir) / f"rotor_unet_cyl2d_{component}.pth"
     checkpoint = torch.load(path, map_location=device)
-    validate_checkpoint(checkpoint, expected_rd)
+    validate_checkpoint(checkpoint, expected_rd, expected_radius_over_rd)
     model = CylindricalUNet2D(
         in_channels=4,
         out_channels=1,
@@ -42,7 +45,8 @@ def load_model(component, device, model_dir=None, expected_rd=None):
     return model, float(checkpoint.get("target_scale", TARGET_SCALE))
 
 
-def evaluate_case(case_id, device, show_plot=True, data_root=DATA_ROOT, model_dir=None, output_dir=None):
+def evaluate_case(case_id, device, show_plot=True, data_root=DATA_ROOT, model_dir=None, output_dir=None,
+                  return_payload=False):
     import matplotlib.pyplot as plt
     import torch
 
@@ -60,7 +64,7 @@ def evaluate_case(case_id, device, show_plot=True, data_root=DATA_ROOT, model_di
     ai_nd = {}
     with torch.no_grad():
         for component in ("u", "v", "w"):
-            model, scale = load_model(component, device, model_dir, meta["disk_radius_m"])
+            model, scale = load_model(component, device, model_dir, meta["disk_radius_m"], meta["radius_over_rd"])
             ai_nd[component] = model(inputs)[0, 0].cpu().numpy() / scale
             del model
             if torch.cuda.is_available():
@@ -81,12 +85,18 @@ def evaluate_case(case_id, device, show_plot=True, data_root=DATA_ROOT, model_di
     comparison = dict(theta_deg=np.rad2deg(theta_rad), z_m=meta["z_m"],
                       radius_m=meta["cylinder_radius_m"], rd_m=meta["disk_radius_m"],
                       cfd=cfd_fields, prediction=ai_fields, case_id=case_id)
-    stats, _, bounds = error_statistics(**{k: v for k, v in comparison.items() if k != "case_id"})
+    stats, _, bounds = error_statistics(**{k: v for k, v in comparison.items() if k != "case_id"},
+                                        radius_over_rd=meta["radius_over_rd"])
     print(f"{case_id} | display/metrics z={bounds} m; zero CFD excluded from point rate")
     for key, values in stats.items():
         print(key, point_label(values["max_error"], "error"),
               point_label(values["max_percent"], "percent"),
               f"zero references excluded={values['zero_reference_count']}", sep="\n")
+    payload = dict(
+        case_id=case_id, theta_deg=np.rad2deg(theta_rad), z_m=meta["z_m"],
+        cylinder_radius_m=meta["cylinder_radius_m"], disk_radius_m=meta["disk_radius_m"],
+        **{f"cfd_{key}": value for key, value in cfd_fields.items()},
+        **{f"prediction_{key}": value for key, value in ai_fields.items()})
     if output_dir is not None:
         destination = Path(output_dir)
         destination.mkdir(parents=True, exist_ok=True)
@@ -103,7 +113,7 @@ def evaluate_case(case_id, device, show_plot=True, data_root=DATA_ROOT, model_di
         print(f"Comparison HTML saved: {html_path}")
 
     if show_plot or output_dir is not None:
-        fig = build_static_figure(**comparison)
+        fig = build_static_figure(**comparison, radius_over_rd=meta["radius_over_rd"])
         if output_dir is not None:
             Path(output_dir).mkdir(parents=True, exist_ok=True)
             fig.savefig(Path(output_dir) / f"error_{case_id}.png", dpi=150)
@@ -111,7 +121,26 @@ def evaluate_case(case_id, device, show_plot=True, data_root=DATA_ROOT, model_di
             plt.show()
         plt.close(fig)
 
-    return metrics_row(case_id, stats, bounds)
+    row = metrics_row(case_id, stats, bounds)
+    return (row, payload) if return_payload else row
+
+
+def evaluate_regions(case_id, device, data_root, model_dir, output_dir,
+                     sa_data_root=None, sa_model_dir=None, show_plot=False):
+    row, payload = evaluate_case(case_id, device, show_plot=show_plot,
+        data_root=data_root, model_dir=model_dir, output_dir=output_dir, return_payload=True)
+    rows = [row]
+    if sa_data_root is not None:
+        sa_row, sa = evaluate_case(case_id, device, show_plot=False,
+            data_root=sa_data_root, model_dir=sa_model_dir, return_payload=True)
+        sa_row["case_id"] = "SA/" + case_id  # result label only; extraction identity is unchanged
+        rows.append(sa_row)
+        payload.update({f"sa_{key}": value for key, value in sa.items()})
+        path = Path(output_dir) / f"comparison_{case_id}.npz"
+        np.savez_compressed(path, **payload)
+        from visualize_validation import export_html
+        export_html(path, path.with_suffix(".html"))
+    return rows
 
 
 def regenerate_html(output_dir):
@@ -144,6 +173,13 @@ def regenerate_results(output_dir):
         data = load_comparison(path)
         stats, _, bounds = error_statistics(**{k: v for k, v in data.items() if k != "case_id"})
         rows.append(metrics_row(data["case_id"], stats, bounds))
+        with np.load(path, allow_pickle=False) as archive:
+            bundled_sa = "sa_cylinder_radius_m" in archive
+        if bundled_sa:
+            sa = load_comparison(path, "SA")
+            sa_stats, _, sa_bounds = error_statistics(
+                **{k: v for k, v in sa.items() if k != "case_id"}, radius_over_rd=SA_RADIUS_OVER_RD)
+            rows.append(metrics_row("SA/" + sa["case_id"], sa_stats, sa_bounds))
         export_html(path, path.with_suffix(".html"))
         fig = build_static_figure(**data)
         fig.savefig(path.with_name("error_" + path.stem.removeprefix("comparison_") + ".png"), dpi=150)
@@ -167,6 +203,8 @@ if __name__ == "__main__":
     mode.add_argument("--replot", action="store_true", help="Regenerate HTML, PNG and error CSV from saved comparisons, without inference")
     mode.add_argument("--html-only", action="store_true",
                         help="Regenerate only HTML from comparison_*.npz in --output-dir; no inference or other outputs")
+    parser.add_argument("--sa-data-root", type=Path)
+    parser.add_argument("--sa-model-dir", type=Path)
     args = parser.parse_args()
     if args.replot:
         regenerate_results(args.output_dir)
@@ -181,9 +219,19 @@ if __name__ == "__main__":
     case_ids = validation_case_ids(args.csv, args.data_root)
     if not case_ids:
         raise RuntimeError("cases.csv에서 type='V' 검증 케이스를 찾지 못했습니다.")
-    results = [evaluate_case(case_id, device, show_plot=not args.no_show,
-                             data_root=args.data_root, model_dir=args.model_dir,
-                             output_dir=args.output_dir) for case_id in case_ids]
+    sa_root = args.sa_data_root
+    if sa_root is None and args.data_root.with_name("dataset_zrd_sa").is_dir():
+        sa_root = args.data_root.with_name("dataset_zrd_sa")
+    sa_models = args.sa_model_dir or args.model_dir.resolve().with_name("models_zrd_sa")
+    if sa_root is not None:
+        if sa_root.resolve() == args.data_root.resolve() or sa_models.resolve() == args.model_dir.resolve():
+            raise ValueError("FATO and SA require separate dataset/model directories")
+        if set(validation_case_ids(args.csv, sa_root)) != set(case_ids):
+            raise ValueError("FATO and SA validation case identifiers differ")
+    results = []
+    for case_id in case_ids:
+        results.extend(evaluate_regions(case_id, device, args.data_root, args.model_dir,
+            args.output_dir, sa_root, sa_models, show_plot=not args.no_show))
     output = args.output_dir / "validation_errors_cyl2rd.csv"
     pd.DataFrame(results).to_csv(output, index=False)
     print(f"검증 결과 저장: {output}")

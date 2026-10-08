@@ -26,6 +26,12 @@ class ZExtractionTest(TestCase):
                 reader.return_value.time_values = [1.0]
                 reader.return_value.read.return_value = pv.MultiBlock({'internalMesh': mesh})
                 extract_nd.extract_velocity_case(case, out, 1.0, 1.0, 153.22, 0.0, -2.0)
+            self.assertEqual(reader.return_value.read.call_count, 1)
+            sa = Path(temp) / 'dataset_zrd_sa'
+            sa_meta = load_case_input(next((sa / 'inputs').glob('*.npz')))
+            self.assertAlmostEqual(sa_meta['radius_over_rd'], 2.5)
+            self.assertEqual(next((out / 'inputs').glob('*.npz')).name,
+                             next((sa / 'inputs').glob('*.npz')).name)
             meta = load_case_input(next((out / 'inputs').glob('*.npz')))
             self.assertEqual(float(meta['z_m'][0]), -2)
             self.assertEqual(float(meta['z_m'][-1]), 3)

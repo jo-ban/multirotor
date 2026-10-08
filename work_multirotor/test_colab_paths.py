@@ -3,6 +3,8 @@
 Run: python -m unittest discover -s work_multirotor -p 'test_*.py'
 """
 import os
+import hashlib
+import pandas as pd
 from pathlib import Path
 import subprocess
 import sys
@@ -67,6 +69,13 @@ class ColabPathsTest(unittest.TestCase):
             dataset, models, results = (root / n for n in ('dataset', 'models', 'results'))
             # Default data root is the CSV parent, even from an unrelated cwd.
             self.run_script(root, 'extract_nd.py', '--csv', csv, '--output-root', dataset)
+            sa_dataset = root / 'dataset_zrd_sa'
+            self.assertEqual(len(list((sa_dataset / 'inputs').glob('*.npz'))), 2)
+            before = {str(p): hashlib.sha256(p.read_bytes()).hexdigest()
+                      for p in dataset.rglob('*') if p.is_file()}
+            self.run_script(root, 'extract_nd.py', '--csv', csv, '--output-root', dataset)
+            self.assertEqual(before, {str(p): hashlib.sha256(p.read_bytes()).hexdigest()
+                             for p in dataset.rglob('*') if p.is_file()})
             targets = list((dataset / 'targets_u').glob('*.npy'))
             self.assertEqual(len(targets), 2)
             for metadata in (dataset / 'inputs').glob('*.npz'):
@@ -95,12 +104,24 @@ class ColabPathsTest(unittest.TestCase):
             self.run_script(root, 'train_nd.py', '--csv', split_csv, '--data-root', dataset,
                             '--model-dir', models, '--epochs', 1)
             self.assertEqual(len(list(models.glob('*.pth'))), 3)
+            sa_models = root / 'models_zrd_sa'
+            self.assertEqual(len(list(sa_models.glob('*.pth'))), 3)
+            before_models = {str(p): hashlib.sha256(p.read_bytes()).hexdigest()
+                             for folder in (models, sa_models) for p in folder.glob('*.pth')}
+            self.run_script(root, 'train_nd.py', '--csv', split_csv, '--data-root', dataset,
+                            '--model-dir', models, '--epochs', 1)
+            self.assertEqual(before_models, {str(p): hashlib.sha256(p.read_bytes()).hexdigest()
+                             for folder in (models, sa_models) for p in folder.glob('*.pth')})
             self.run_script(root, 'predict_nd.py', '--model-dir', models,
                             '--output', results / 'prediction.npz', '--no-show',
                             '--ground-z', 0, '--rotor-z', 9.3101752, '--z-max', 15,
                             '--rd', 9.3101751, '--l-over-d', 1.6,
                             '--plot-output', results / 'prediction.png')
             with np.load(results / 'prediction.npz') as prediction:
+                self.assertEqual(prediction['sa_u_mps'].shape, (256, 256))
+                self.assertAlmostEqual(float(prediction['sa_cylinder_radius_m']) / 9.3101751, 2.5, places=5)
+                from visualize_prediction_3d import build_figure
+                self.assertEqual(len(build_figure(results / 'prediction.npz').frames), 8)
                 self.assertEqual(prediction['u_mps'].shape, (256, 256))
                 self.assertTrue(np.isfinite(prediction['u_mps']).all())
                 self.assertEqual(float(prediction['z_m'][0]), 0)
@@ -120,7 +141,17 @@ class ColabPathsTest(unittest.TestCase):
             self.assertEqual(len(list((results / 'visualize').glob('surface_*.png'))), 1)
             self.run_script(root, 'evaluate_error.py', '--csv', split_csv, '--data-root', dataset,
                             '--model-dir', models, '--output-dir', results / 'eval', '--no-show')
-            self.assertTrue((results / 'eval' / 'validation_errors_cyl2rd.csv').is_file())
+            metrics = pd.read_csv(results / 'eval' / 'validation_errors_cyl2rd.csv')
+            self.assertEqual(len(metrics), 2)
+            self.assertEqual(sum(metrics.case_id.str.startswith('SA/')), 1)
+            comparison = next((results / 'eval').glob('comparison_*.npz'))
+            with np.load(comparison) as data:
+                self.assertIn('sa_cylinder_radius_m', data)
+            from visualize_validation import export_html
+            self.assertEqual(len(export_html(comparison, comparison.with_suffix('.html')).frames), 8)
+            self.run_script(root, 'evaluate_error.py', '--replot', '--output-dir', results / 'eval')
+            pd.testing.assert_frame_equal(metrics, pd.read_csv(results / 'eval' / 'validation_errors_cyl2rd.csv'))
+            self.run_script(root, 'evaluate_error.py', '--html-only', '--output-dir', results / 'eval')
             self.assertEqual(len(list((results / 'eval').glob('error_*.png'))), 1)
             self.run_script(root, 'extract_nd.py', '--csv', csv, '--data-root', root / 'missing',
                             '--output-root', root / 'bad', success=False)

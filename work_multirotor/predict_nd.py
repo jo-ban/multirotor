@@ -7,6 +7,8 @@ import torch
 
 from data_utils_cylindrical import (
     DEFAULT_SHAPE_ZTHETA,
+    CYLINDER_RADIUS_OVER_RD,
+    SA_RADIUS_OVER_RD,
     TARGET_SCALE,
     COORDINATE_SYSTEM,
     INPUT_CHANNELS,
@@ -26,12 +28,13 @@ from plot_hover import attach_velocity_hover
 MODEL_PATHS = {c: Path(f"rotor_unet_cyl2d_{c}.pth") for c in ("u", "v", "w")}
 
 
-def load_component_model(component, device, model_dir=None, expected_rd=None):
+def load_component_model(component, device, model_dir=None, expected_rd=None,
+                         expected_radius_over_rd=CYLINDER_RADIUS_OVER_RD):
     path = MODEL_PATHS[component] if model_dir is None else Path(model_dir) / f"rotor_unet_cyl2d_{component}.pth"
     if not path.exists():
         raise FileNotFoundError(f"{path}가 없습니다. train_nd.py로 먼저 학습하세요.")
     checkpoint = torch.load(path, map_location=device)
-    validate_checkpoint(checkpoint, expected_rd)
+    validate_checkpoint(checkpoint, expected_rd, expected_radius_over_rd)
     model = CylindricalUNet2D(
         in_channels=4,
         out_channels=1,
@@ -55,6 +58,8 @@ def predict_cylindrical_surface(
     model_dir=None,
     plot_path=None,
     backend="TkAgg",
+    radius_over_rd=CYLINDER_RADIUS_OVER_RD,
+    return_payload=False,
 ):
     """고정 RD와 L/D로 형상을 계산하고 r=2RD 원통면의 U_r/U_theta/U_z를 예측한다."""
     if show_plot:
@@ -89,7 +94,7 @@ def predict_cylindrical_surface(
     prediction_nd = {}
     with torch.no_grad():
         for component in ("u", "v", "w"):
-            model, scale = load_component_model(component, device, model_dir, disk_radius_m)
+            model, scale = load_component_model(component, device, model_dir, disk_radius_m, radius_over_rd)
             prediction_nd[component] = (
                 model(inputs)[0, 0].cpu().numpy() / scale
             ).astype(np.float32)
@@ -117,9 +122,7 @@ def predict_cylindrical_surface(
         ).items()
     }
 
-    Path(save_path).parent.mkdir(parents=True, exist_ok=True)
-    np.savez_compressed(
-        save_path,
+    payload = dict(
         u_mps=prediction["u"],
         v_mps=prediction["v"],
         w_mps=prediction["w"],
@@ -144,16 +147,16 @@ def predict_cylindrical_surface(
         rotor_diameter_m=np.float32(rotor_diameter_m),
         l_over_d=np.float32(l_over_d),
         disk_radius_m=np.float64(disk_radius_m),
-        cylinder_radius_m=np.float32(2.0 * disk_radius_m),
+        cylinder_radius_m=np.float32(radius_over_rd * disk_radius_m),
         disk_loading=np.float32(disk_loading),
     )
-    print(f"r=2R_D 원통 표면 예측 결과 저장: {save_path}")
-
-    # Keep the browser viewer beside the numerical output, including on Drive.
-    from visualize_prediction_3d import export_html
-    html_path = Path(save_path).with_name(Path(save_path).stem + "_3d.html")
-    export_html(save_path, html_path)
-    print(f"Interactive 3D HTML saved: {html_path}")
+    if save_path is not None:
+        Path(save_path).parent.mkdir(parents=True, exist_ok=True)
+        np.savez_compressed(save_path, **payload)
+        from visualize_prediction_3d import export_html
+        html_path = Path(save_path).with_name(Path(save_path).stem + "_3d.html")
+        export_html(save_path, html_path)
+        print(f"Interactive 3D HTML saved: {html_path}")
 
     if show_plot or plot_path is not None:
         extent = plot_extent(theta_deg, z_m)
@@ -171,7 +174,7 @@ def predict_cylindrical_surface(
             ax.set_ylabel("z [m]")
             ax.set_ylim(float(z_m[0]), min(float(z_m[-1]), float(disk_radius_m)))
             fig.colorbar(image, ax=ax, label="m/s")
-        plt.suptitle(f"Cylinder r=2R_D prediction | L/D={l_over_d:.3f}")
+        plt.suptitle(f"Cylinder r={radius_over_rd:g}R_D prediction | L/D={l_over_d:.3f}")
         plt.tight_layout()
         if plot_path is not None:
             Path(plot_path).parent.mkdir(parents=True, exist_ok=True)
@@ -182,7 +185,31 @@ def predict_cylindrical_surface(
             plt.show(block=True)
         plt.close(fig)
 
-    return cylindrical["u_r"], cylindrical["u_theta"], cylindrical["u_z"]
+    return payload if return_payload else (cylindrical["u_r"], cylindrical["u_theta"], cylindrical["u_z"])
+
+
+def predict_regions(save_path, model_dir, sa_model_dir=None, **conditions):
+    """Infer independent FATO/SA models and save one compatible NPZ/HTML."""
+    candidate = Path(model_dir).resolve().with_name("models_zrd_sa")
+    if sa_model_dir is None and candidate.is_dir():
+        sa_model_dir = candidate
+    if sa_model_dir is not None and Path(sa_model_dir).resolve() == Path(model_dir).resolve():
+        raise ValueError("FATO and SA model directories must differ")
+    payload = predict_cylindrical_surface(
+        save_path=None, model_dir=model_dir, return_payload=True, **conditions)
+    if sa_model_dir is not None:
+        sa_conditions = {**conditions, "show_plot": False, "plot_path": None}
+        sa = predict_cylindrical_surface(
+            save_path=None, model_dir=sa_model_dir, radius_over_rd=SA_RADIUS_OVER_RD,
+            return_payload=True, **sa_conditions)
+        payload.update({f"sa_{key}": value for key, value in sa.items()})
+    output = Path(save_path)
+    output.parent.mkdir(parents=True, exist_ok=True)
+    np.savez_compressed(output, **payload)
+    from visualize_prediction_3d import export_html
+    export_html(output, output.with_name(output.stem + "_3d.html"))
+    print(f"Prediction regions saved: {output}")
+    return payload
 
 
 if __name__ == "__main__":
@@ -199,8 +226,9 @@ if __name__ == "__main__":
     parser.add_argument("--backend", default="TkAgg", choices=("TkAgg", "QtAgg"),
                         help="Interactive GUI backend (default: TkAgg)")
     parser.add_argument("--plot-output", type=Path, help="Optional plot file; no PNG is saved by default")
+    parser.add_argument("--sa-model-dir", type=Path)
     args = parser.parse_args()
-    predict_cylindrical_surface(
+    predict_regions(
         disk_radius_m=args.rd,
         l_over_d=args.l_over_d,
         disk_loading=args.disk_loading,
@@ -210,6 +238,7 @@ if __name__ == "__main__":
         shape_ztheta=(256, 256),
         save_path=args.output,
         model_dir=args.model_dir,
+        sa_model_dir=args.sa_model_dir,
         show_plot=not args.no_show,
         plot_path=args.plot_output,
         backend=args.backend,

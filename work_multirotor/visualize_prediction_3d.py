@@ -16,9 +16,9 @@ FIELDS = {
 }
 
 
-def _component_figure(path, component=0, radius_over_rd=CYLINDER_RADIUS_OVER_RD):
+def _component_figure(path, component=0, radius_over_rd=CYLINDER_RADIUS_OVER_RD, prefix=""):
     with np.load(path, allow_pickle=False) as archive:
-        data = {key: archive[key] for key in archive.files}
+        data = {key[len(prefix):]: archive[key] for key in archive.files if key.startswith(prefix)}
     theta = np.asarray(data["theta_deg"], dtype=float)
     heights = np.asarray(data["z_m"], dtype=float)
     radius = float(data["cylinder_radius_m"])
@@ -92,12 +92,17 @@ def _component_figure(path, component=0, radius_over_rd=CYLINDER_RADIUS_OVER_RD)
 def build_figure(path, sa_path=None):
     """Independent region files; only the selected velocity surface is live."""
     frames, first = [], None
+    with np.load(path, allow_pickle=False) as archive:
+        bundled_sa = "sa_cylinder_radius_m" in archive and sa_path is None
+    if bundled_sa:
+        sa_path = path
     for region, source, ratio in (("FATO", path, CYLINDER_RADIUS_OVER_RD),
                                   ("SA", sa_path, SA_RADIUS_OVER_RD)):
         if source is None:
             continue
         for component in range(len(FIELDS)):
-            fig = _component_figure(source, component, ratio)
+            fig = _component_figure(source, component, ratio,
+                    prefix="sa_" if region == "SA" and bundled_sa else "")
             fig.update_layout(updatemenus=region_component_menus(
                 region, component, FIELDS.values(), sa_path is not None))
             if first is None:

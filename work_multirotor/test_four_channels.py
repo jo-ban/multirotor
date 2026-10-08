@@ -60,6 +60,22 @@ class FourChannelTest(unittest.TestCase):
             with self.assertRaisesRegex(ValueError, 're-extract'):
                 load_case_input(path)
 
+    def test_wrong_region_checkpoint_rejected(self):
+        with tempfile.TemporaryDirectory() as folder:
+            model = CylindricalUNet2D(base_channels=2)
+            checkpoint = dict(state_dict=model.state_dict(), in_channels=4,
+                              base_channels=2, target_scale=100.0,
+                              coordinate_system=COORDINATE_SYSTEM, input_channels=INPUT_CHANNELS)
+            path = Path(folder) / 'rotor_unet_cyl2d_u.pth'
+            torch.save(checkpoint, path)
+            with self.assertRaises(ValueError):
+                load_component_model('u', torch.device('cpu'), folder, expected_radius_over_rd=2.5)
+            checkpoint['radius_over_rd'] = 2.5
+            torch.save(checkpoint, path)
+            load_component_model('u', torch.device('cpu'), folder, expected_radius_over_rd=2.5)
+            with self.assertRaises(ValueError):
+                load_component_model('u', torch.device('cpu'), folder)
+
     def test_plot_centers_and_coordinate_validation(self):
         extent = plot_extent(np.array([0, 90, 180, 270]), np.array([-2, 0, 2]))
         self.assertEqual(extent, (-45, 315, -3, 3))

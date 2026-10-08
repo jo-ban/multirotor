@@ -185,6 +185,14 @@ def make_input_surface(l_over_d, z_over_rd, shape_ztheta):
     return image
 
 
+def region_radius_over_rd(radius_m, rd_m):
+    ratio = float(radius_m) / float(rd_m)
+    for allowed in CYLINDER_RADII_OVER_RD:
+        if np.isclose(ratio, allowed, rtol=1e-6, atol=1e-7):
+            return allowed
+    raise ValueError("Cylinder radius must be FATO (2RD) or SA (2.5RD)")
+
+
 def load_case_input(input_path):
     with np.load(input_path) as archive:
         data = {key: archive[key] for key in archive.files}
@@ -201,6 +209,7 @@ def load_case_input(input_path):
         "disk_radius_m": float(data["disk_radius_m"]),
         "disk_loading": float(data["disk_loading"]),
         "cylinder_radius_m": float(data["cylinder_radius_m"]),
+        "radius_over_rd": region_radius_over_rd(data["cylinder_radius_m"], data["disk_radius_m"]),
         "center_xy_m": tuple(float(x) for x in data["center_xy_m"]),
         "rotor_z_m": float(data["rotor_z_m"]),
         "ground_z_m": float(data["ground_z_m"]),
@@ -253,7 +262,7 @@ def validation_ids_from_frame(data_root, dataframe):
     return case_ids_for_rows(data_root, dataframe[labels == "V"])
 
 
-def validate_checkpoint(checkpoint, expected_rd=None):
+def validate_checkpoint(checkpoint, expected_rd=None, expected_radius_over_rd=None):
     if (checkpoint.get("coordinate_system") != COORDINATE_SYSTEM
             or tuple(checkpoint.get("input_channels", ())) != INPUT_CHANNELS
             or checkpoint.get("in_channels") != 4
@@ -262,6 +271,12 @@ def validate_checkpoint(checkpoint, expected_rd=None):
     if expected_rd is not None and "disk_radius_m" in checkpoint:
         if not np.isclose(float(checkpoint["disk_radius_m"]), expected_rd, rtol=1e-6, atol=1e-7):
             raise ValueError("Prediction RD differs from the fixed RD used for training")
+
+
+    if expected_radius_over_rd is not None:
+        ratio = float(checkpoint.get("radius_over_rd", CYLINDER_RADIUS_OVER_RD))
+        if not np.isclose(ratio, expected_radius_over_rd, rtol=1e-6, atol=1e-7):
+            raise ValueError("Checkpoint region differs from the requested FATO/SA radius")
 
 
 def plot_extent(theta_deg, z_m):

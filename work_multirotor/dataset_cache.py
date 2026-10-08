@@ -7,11 +7,11 @@ import pandas as pd
 
 from data_utils_cylindrical import (
     center_from_row, disk_loading_from_row, geometry_from_row,
-    load_case_input, rotor_ground_z_from_row,
+    load_case_input, rotor_ground_z_from_row, CYLINDER_RADIUS_OVER_RD,
 )
 
 
-def dataset_status(root, csv_path):
+def dataset_status(root, csv_path, radius_over_rd=CYLINDER_RADIUS_OVER_RD):
     root = Path(root)
     frame = pd.read_csv(csv_path, dtype={'folder': str})
     if 'folder' not in frame or frame.empty:
@@ -26,6 +26,8 @@ def dataset_status(root, csv_path):
     try:
         for path in paths:
             meta = load_case_input(path)
+            if not np.isclose(meta['radius_over_rd'], radius_over_rd, rtol=1e-6):
+                return False, f'{path.name}: 영역 반경이 다릅니다.'
             folder = meta['source_folder']
             if folder in records:
                 return False, f'중복 추출 케이스: {folder}'

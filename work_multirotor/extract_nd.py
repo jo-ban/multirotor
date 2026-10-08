@@ -1,5 +1,6 @@
 import argparse
 import hashlib
+import tempfile
 from pathlib import Path, PureWindowsPath
 
 import numpy as np
@@ -9,6 +10,9 @@ import pyvista as pv
 from data_utils_cylindrical import (
     COORDINATE_SYSTEM,
     CYLINDER_RADIUS_OVER_RD,
+    SA_RADIUS_OVER_RD,
+    CYLINDER_RADII_OVER_RD,
+    load_case_input,
     center_from_row,
     disk_loading_from_row,
     disk_loading_from_diameter,
@@ -31,7 +35,7 @@ def _folder_name(value):
     return str(value)
 
 
-def _make_cylinder_points(center_x, center_y, disk_radius_m, ground_z_m, z_max_m, nz, ntheta):
+def _make_cylinder_points(center_x, center_y, disk_radius_m, ground_z_m, z_max_m, nz, ntheta, radius_over_rd=CYLINDER_RADIUS_OVER_RD):
     """지면부터 메시 최대 z까지 증가하는 r=2R_D 원통 좌표를 만든다."""
     theta = np.linspace(0.0, 2.0 * np.pi, ntheta, endpoint=False, dtype=np.float64)
     if not np.isfinite([ground_z_m, z_max_m, disk_radius_m]).all() or z_max_m <= ground_z_m or disk_radius_m <= 0:
@@ -40,14 +44,16 @@ def _make_cylinder_points(center_x, center_y, disk_radius_m, ground_z_m, z_max_m
     z_over_rd = z_m / disk_radius_m
     theta_grid, z_grid = np.meshgrid(theta, z_m, indexing="xy")
 
-    cylinder_radius_m = CYLINDER_RADIUS_OVER_RD * disk_radius_m
+    cylinder_radius_m = radius_over_rd * disk_radius_m
     x = center_x + cylinder_radius_m * np.cos(theta_grid)
     y = center_y + cylinder_radius_m * np.sin(theta_grid)
     points = np.column_stack((x.ravel(), y.ravel(), z_grid.ravel()))
     return points, theta, z_m, z_over_rd, cylinder_radius_m
 
 
-def extract_velocity_case(
+def _extract_surface(
+    mesh,
+    radius_over_rd,
     case_path,
     output_root,
     disk_radius_m,
@@ -63,26 +69,32 @@ def extract_velocity_case(
     # Retain the legacy argument for callers, but always use fixed-total-thrust DL.
     disk_loading = disk_loading_from_diameter(rotor_diameter_m)
 
-    foam_file = case_path / f"{case_path.name}.foam"
-    if not foam_file.exists():
-        foam_file.touch()
-
-    reader = pv.OpenFOAMReader(str(foam_file))
-    reader.cell_to_point_creation = True
-    if not reader.time_values:
-        raise RuntimeError(f"time directory를 찾을 수 없습니다: {case_path}")
-    reader.set_active_time_value(max(reader.time_values))
-
-    multi_block = reader.read()
-    mesh = multi_block["internalMesh"] if "internalMesh" in multi_block.keys() else multi_block[0]
-    mesh = mesh.cell_data_to_point_data()
-
     z_min_m, z_max_m = map(float, mesh.bounds[4:6])
     if not z_min_m <= ground_z_m < z_max_m:
         raise ValueError(f"ground_z={ground_z_m} must lie in mesh z bounds [{z_min_m}, {z_max_m})")
     nz, ntheta = map(int, RESOLUTION_Z_THETA)
+    out = Path(output_root)
+    height_over_rd = abs(rotor_z_m - ground_z_m) / disk_radius_m
+    source_folder = str(source_folder if source_folder is not None else case_path.name).strip().replace("\\", "/")
+    identity = repr((source_folder, rotor_spacing_m, rotor_diameter_m, rotor_z_m, ground_z_m, z_max_m, disk_loading, center_x, center_y))
+    suffix = hashlib.sha256(identity.encode("utf-8")).hexdigest()[:16]
+    case_id = make_case_id(l_over_d, disk_radius_m, height_over_rd) + "_ZRD_" + suffix
+    input_path = out / "inputs" / f"input_{case_id}.npz"
+    if input_path.exists():
+        meta = load_case_input(input_path)
+        if not np.isclose(meta["radius_over_rd"], radius_over_rd):
+            raise ValueError("FATO and SA must use separate output roots")
+        for component in ("u", "v", "w"):
+            target = out / f"targets_{component}" / f"{component}_{case_id}.npy"
+            if not target.is_file() or np.load(target, mmap_mode="r").shape != (nz, ntheta):
+                raise RuntimeError(f"Incomplete existing case; preserved without overwriting: {target}")
+        print(f"  [재사용] {case_id} | r={radius_over_rd:g}RD")
+        return case_id
+    for path in (out / "inputs").glob("input_*.npz"):
+        if load_case_input(path)["source_folder"] == source_folder:
+            raise RuntimeError(f"Existing source case has different metadata; preserved: {path}")
     points, theta, z_m, z_over_rd, cylinder_radius_m = _make_cylinder_points(
-        center_x, center_y, disk_radius_m, ground_z_m, z_max_m, nz, ntheta
+        center_x, center_y, disk_radius_m, ground_z_m, z_max_m, nz, ntheta, radius_over_rd
     )
     sampled = pv.PolyData(points).sample(mesh)
     if "U" not in sampled.point_data:
@@ -110,11 +122,6 @@ def extract_velocity_case(
     for directory in ("inputs", "targets_u", "targets_v", "targets_w"):
         (out / directory).mkdir(parents=True, exist_ok=True)
 
-    height_over_rd = abs(rotor_z_m - ground_z_m) / disk_radius_m
-    source_folder = str(source_folder if source_folder is not None else case_path.name).strip().replace("\\", "/")
-    identity = repr((source_folder, rotor_spacing_m, rotor_diameter_m, rotor_z_m, ground_z_m, z_max_m, disk_loading, center_x, center_y))
-    suffix = hashlib.sha256(identity.encode("utf-8")).hexdigest()[:16]
-    case_id = make_case_id(l_over_d, disk_radius_m, height_over_rd) + "_ZRD_" + suffix
     np.savez_compressed(
         out / "inputs" / f"input_{case_id}.npz",
         coordinate_system=COORDINATE_SYSTEM,
@@ -141,10 +148,83 @@ def extract_velocity_case(
 
     print(
         f"  [완료] {case_id} | surface(z,theta)={velocity_nd.shape[:2]} | "
-        f"r={CYLINDER_RADIUS_OVER_RD:.1f}R_D={cylinder_radius_m:.4f} m | "
+        f"r={radius_over_rd:.1f}R_D={cylinder_radius_m:.4f} m | "
         f"ground_z={ground_z_m:.4f} m -> mesh z_max={z_max_m:.4f} m | "
         f"D={rotor_diameter_m:.4f} m | DL={disk_loading:.4f} N/m^2 (total thrust 30000 N)"
     )
+
+    return case_id
+
+
+def _read_velocity_mesh(case_path):
+    """Read U once; adapt flattened Drive exports only in a temporary case."""
+    case_path = Path(case_path)
+    numeric = []
+    for path in case_path.iterdir():
+        try:
+            time = float(path.name)
+        except ValueError:
+            continue
+        if path.is_dir() and ((path / "U").is_file() or (path / "U.gz").is_file()):
+            numeric.append((time, path))
+    candidates = (case_path / "constant/polyMesh", case_path / "polyMesh",
+                  case_path / "constant/constant/polyMesh")
+    mesh_root = next((p for p in candidates if (p / "points").is_file()), None)
+    if mesh_root is None:
+        # Also permits the existing mocked reader tests.
+        reader = pv.OpenFOAMReader(str(case_path / f"{case_path.name}.foam"))
+        reader.cell_to_point_creation = True
+        if not reader.time_values:
+            raise RuntimeError(f"time directory를 찾을 수 없습니다: {case_path}")
+        reader.set_active_time_value(max(reader.time_values))
+        blocks = reader.read()
+    else:
+        work = Path("/content/multirotor_runs")
+        temporary_root = work if work.is_dir() else None
+        with tempfile.TemporaryDirectory(prefix="foam_", dir=temporary_root) as folder:
+            root = Path(folder)
+            (root / "constant").mkdir()
+            (root / "constant/polyMesh").symlink_to(mesh_root.resolve(), target_is_directory=True)
+            if numeric:
+                for _, path in numeric:
+                    (root / path.name).symlink_to(path.resolve(), target_is_directory=True)
+            else:
+                velocity = next((p for p in (case_path / "constant/U", case_path / "U",
+                                case_path / "constant/constant/U",
+                                case_path / "constant/U.gz", case_path / "U.gz",
+                                case_path / "constant/constant/U.gz") if p.is_file()), None)
+                if velocity is None:
+                    raise RuntimeError(f"OpenFOAM U field is missing: {case_path}")
+                (root / "0").mkdir()
+                (root / "0" / velocity.name).symlink_to(velocity.resolve())
+            foam = root / "case.foam"
+            foam.touch()
+            reader = pv.OpenFOAMReader(str(foam))
+            reader.cell_to_point_creation = True
+            reader.skip_zero_time = False
+            if not reader.time_values:
+                raise RuntimeError(f"time directory를 찾을 수 없습니다: {case_path}")
+            reader.set_active_time_value(max(reader.time_values))
+            blocks = reader.read()
+    mesh = blocks["internalMesh"] if "internalMesh" in blocks.keys() else blocks[0]
+    return mesh.cell_data_to_point_data()
+
+
+def extract_velocity_case(case_path, output_root, disk_radius_m, l_over_d, disk_loading,
+                          rotor_z_m, ground_z_m, center_x=0.0, center_y=0.0,
+                          source_folder=None, radii_over_rd=None, sa_output_root=None):
+    radii = list(CYLINDER_RADII_OVER_RD if radii_over_rd is None else radii_over_rd)
+    if not radii or len(set(radii)) != len(radii) or any(r not in CYLINDER_RADII_OVER_RD for r in radii):
+        raise ValueError("Choose unique radii from the FATO/SA radius list")
+    fato_root = Path(output_root)
+    sa_root = Path(sa_output_root) if sa_output_root is not None else fato_root.with_name("dataset_zrd_sa")
+    if fato_root.resolve() == sa_root.resolve():
+        raise ValueError("FATO and SA output roots must differ")
+    mesh = _read_velocity_mesh(case_path)
+    return [_extract_surface(mesh, ratio, Path(case_path),
+                fato_root if ratio == CYLINDER_RADIUS_OVER_RD else sa_root,
+                disk_radius_m, l_over_d, disk_loading, rotor_z_m, ground_z_m,
+                center_x, center_y, source_folder) for ratio in radii]
 
 
 def main():
@@ -152,6 +232,8 @@ def main():
     parser.add_argument("--csv", type=Path, default=Path("cases.csv"))
     parser.add_argument("--data-root", type=Path, help="Root for relative CSV folder values (default: CSV directory)")
     parser.add_argument("--output-root", type=Path, default=Path("dataset_zrd"))
+    parser.add_argument("--sa-output-root", type=Path, help="Separate SA dataset root")
+    parser.add_argument("--radii-over-rd", nargs="+", type=float, choices=CYLINDER_RADII_OVER_RD, default=CYLINDER_RADII_OVER_RD)
     args = parser.parse_args()
     csv_path = args.csv.expanduser().resolve()
     data_root = args.data_root.expanduser().resolve() if args.data_root else csv_path.parent
@@ -197,6 +279,8 @@ def main():
                 center_x=center_x,
                 center_y=center_y,
                 source_folder=folder,
+                radii_over_rd=args.radii_over_rd,
+                sa_output_root=args.sa_output_root,
             )
         except Exception as exc:
             print(f"  [에러] {row.get('folder')}: {exc}")

@@ -115,7 +115,7 @@ CSV에서 load, disk_loading, DL 열은 필요 없으며, 기존 열이 남아 �
 
 ## CFD·예측·오차 비교 HTML
 
-[최신 GitHub 노트북을 Colab에서 열기](https://colab.research.google.com/github/jo-ban/multirotor/blob/main/multirotor_colab.ipynb)
+[최신 GitHub 노트북을 Colab에서 열기](https://colab.research.google.com/github/jo-ban/multirotor/blob/claude/great-faraday-ijzn3f/multirotor_colab.ipynb)
 
 검증 실행은 학습에서 제외된 `type=V`의 실제 추출값과 같은 조건·좌표의
 모델 예측값을 m/s로 복원한 뒤 비교합니다. 예측 실행과 검증 실행은 독립적입니다.
@@ -132,7 +132,7 @@ CSV에서 load, disk_loading, DL 열은 필요 없으며, 기존 열이 남아 �
   HTML 다운로드는 선택 사항이며 결과는 Drive에도 저장됩니다.
 - CFD와 예측의 색상 범위는 물리량별로 같고, 오차는 0부터 시작하는 별도 범위입니다.
   속력 오차는 속력 차이의 절대값이며 속도 오차 벡터의 크기와 다릅니다.
-- 측정 위치는 반경 2RD의 원통 표면입니다. 각도에 따른 실제 분포를 유지하며
+- 측정 위치는 FATO(2RD)와 SA(2.5RD)의 독립 원통 표면입니다. 각도에 따른 실제 분포를 유지하며
   원통 내부 체적이나 축대칭 복제 데이터를 생성하지 않습니다.
   x/y는 원통 중심에 대한 상대 좌표, z는 추출된 실제 높이입니다.
 - HTML의 3D 표시는 성능을 위해 최대 64개 높이 × 96개 각도를 선택합니다.
@@ -174,18 +174,34 @@ python work_multirotor/evaluate_error.py --replot --output-dir /path/to/results/
 
 ## Colab 데이터셋 검사
 
-캐시는 CSV의 전체 folder 목록, 케이스 수, U/V/W 배열, 형상·좌표·자동 DL이 모두 일치할 때만 재사용합니다. 한 케이스만 저장된 불완전 캐시는 재추출합니다. 추출 로그에는 [현재/전체] 폴더명과 최종 완료 개수가 표시됩니다. CSV에 등록되지 않은 원본 폴더는 추출하지 않습니다. CFD 원본을 수정한 경우 REBUILD_DATASET=True로 설정하세요. 동일 캐시 폴더를 갱신하고 반복 실행해도 FileExistsError가 발생하지 않습니다.
+캐시는 CSV의 전체 folder 목록, 케이스 수, U/V/W 배열, 형상·좌표·자동 DL이 모두 일치할 때만 재사용합니다. 한 케이스만 저장된 불완전 캐시는 재추출합니다. 추출 로그에는 [현재/전체] 폴더명과 최종 완료 개수가 표시됩니다. CSV에 등록되지 않은 원본 폴더는 추출하지 않습니다. 기존 데이터는 보존합니다. CFD 원본 변경으로 메타데이터가 충돌하면 명시적으로 중단합니다. 동일 캐시 폴더를 갱신하고 반복 실행해도 FileExistsError가 발생하지 않습니다.
 
-## FATO / SA 표시 기반 (단계 1)
+## FATO / SA 추출·학습·예측
 
-FATO는 반경 2RD, SA(Safety Area)는 별도의 반경 2.5RD 원통 격자입니다.
-반경 상수와 리스트는 `data_utils_cylindrical.py` 한 곳에 정의합니다.
-현재 추출·학습·예측·평가 파이프라인은 FATO만 지원하며 SA 데이터·모델을 생성하지 않습니다.
-뷰어 API의 선택 인자 `sa_data`(검증), `sa_path`(예측)에 독립된 SA 데이터를 전달하면
-같은 영역/성분 UI로 볼 수 있습니다. 검증 `sa_data`는 `load_comparison`과 같은 키를 사용합니다.
-두 HTML 내보내기 함수의 `sa_input_path`도 독립된 SA NPZ를 받습니다.
-SA의 RD 메타데이터가 없으면 반경/SA 반경비로 복원하며, FATO의 기존 반경/2 규칙은 유지합니다.
-SA를 FATO 배열에서 계산하거나 추론하지 않습니다. SA 추출·별도 모델·노트북 단계는 사용자 승인 후 진행합니다.
+반경 상수와 리스트 [2.0, 2.5]는 data_utils_cylindrical.py 한 곳에서 관리합니다.
+추출은 케이스의 OpenFOAM U를 한 번 읽고 FATO(2RD)와 SA(2.5RD)를 각각 샘플링합니다.
+기존 FATO는 dataset_zrd, SA는 별도 고정 폴더 dataset_zrd_sa에 저장합니다.
+두 영역의 case_id는 기존 해시 규칙을 유지하며 폴더가 분리되므로 충돌하지 않습니다.
+원통이 도메인 밖이면 기존 FAIL_ON_INVALID_POINTS 규칙으로 실패합니다.
+RD=9.3101751 m, center=(0,0), 절대 z좌표와 기존 CSV 형식·파서는 유지합니다.
 
-HTML 갱신은 기존 `evaluate_error.py --html-only --output-dir .../results/evaluation`을 사용하면 됩니다.
-`--replot`도 기존 이름의 HTML/PNG/통계 CSV를 갱신합니다. CSV 입력·case_id와 결과 경로는 변경하지 않습니다.
+학습 셀은 두 데이터셋에서 별도 U/V/W 모델을 학습합니다.
+FATO는 models_zrd, SA는 models_zrd_sa를 사용하며 기존 모델은 검증 후 재사용합니다.
+기존 데이터도 덮어쓰지 않습니다. 원본 CFD가 바뀌어 기존 메타데이터와 충돌하면 중단합니다.
+SA는 원본 CFD에서 추출해야 하며 FATO NPZ에서 만들 수 없습니다.
+
+예측 셀은 두 모델을 사용하고 같은 prediction.npz에 SA 배열을 sa_ 접두사로 추가합니다.
+prediction_3d.html의 영역 [FATO | SA] 및 성분 버튼으로 전환합니다.
+평가도 같은 comparison_<case_id>.npz/.html에 두 영역을 담습니다.
+validation_errors_cyl2rd.csv는 기존 열과 FATO 행을 유지하고 SA/<case_id> 행을 추가합니다.
+PNG는 기존 FATO 정적 요약을 유지합니다. SA 데이터·모델이 없는 기존 FATO 실행은 계속 지원합니다.
+HTML은 Plotly를 포함하는 독립 파일이며 --replot / --html-only는 기존 NPZ로 같은 경로를 갱신합니다.
+
+노트북은 claude/great-faraday-ijzn3f 브랜치를 clone/pull --ff-only 합니다.
+결과에는 RUN_ID를 사용하지 않으며 Drive 경로는 설정 셀에서 지정합니다.
+기존 Drive 사본은 저장소의 변경으로 셀이 자동 갱신되지 않으므로 동일 사본의 설정·추출·학습·예측 셀을 갱신해야 합니다.
+
+```bash
+python work_multirotor/extract_nd.py --csv /path/to/cases.csv --output-root /path/to/dataset_zrd --sa-output-root /path/to/dataset_zrd_sa
+python work_multirotor/train_nd.py --csv /path/to/cases.csv --data-root /path/to/dataset_zrd --sa-data-root /path/to/dataset_zrd_sa --model-dir /path/to/models_zrd --sa-model-dir /path/to/models_zrd_sa
+```

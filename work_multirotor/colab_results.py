@@ -28,7 +28,8 @@ def show_validation_results(directory, case_ids):
     from visualize_validation import build_figure, load_comparison
 
     directory = Path(directory)
-    paths = [directory / f"comparison_{case_id}.npz" for case_id in case_ids]
+    paths = [directory / f"comparison_{case_id}.npz" for case_id in case_ids
+             if not str(case_id).startswith("SA/")]
     if not paths:
         return
     chooser = widgets.Dropdown(options=[(p.stem.removeprefix("comparison_"), str(p)) for p in paths],
@@ -41,7 +42,13 @@ def show_validation_results(directory, case_ids):
     def render(*_):
         with output:
             output.clear_output(wait=True)
-            figure = build_figure(**load_comparison(chooser.value), view=view.value)
+            import numpy as np
+            bundled_sa = False
+            if Path(chooser.value).is_file():
+                with np.load(chooser.value, allow_pickle=False) as archive:
+                    bundled_sa = "sa_cylinder_radius_m" in archive
+            sa_data = load_comparison(chooser.value, "SA") if bundled_sa else None
+            figure = build_figure(**load_comparison(chooser.value), view=view.value, sa_data=sa_data)
             figure.show(renderer="colab", auto_play=False)
 
     def download(_):

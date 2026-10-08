@@ -10,6 +10,9 @@ from torch.utils.data import DataLoader, Dataset
 
 from data_utils_cylindrical import (
     TARGET_SCALE,
+    CYLINDER_RADIUS_OVER_RD,
+    SA_RADIUS_OVER_RD,
+    validate_checkpoint,
     COORDINATE_SYSTEM,
     INPUT_CHANNELS,
     find_case_ids,
@@ -49,6 +52,11 @@ class CylindricalSurfaceDataset(Dataset):
         if not np.allclose(radii, radii[0], rtol=1e-6, atol=1e-7):
             raise ValueError("Extracted dataset contains different RD values; use one fixed RD")
         self.disk_radius_m = radii[0]
+        ratios = [load_case_input(self.root / "inputs" / f"input_{case_id}.npz")["radius_over_rd"]
+                  for case_id in all_ids]
+        if not np.allclose(ratios, ratios[0], rtol=1e-6):
+            raise ValueError("FATO and SA must not be mixed in a training dataset")
+        self.radius_over_rd = ratios[0]
         print(f"  [{self.component.upper()}] 학습 케이스: {len(self.case_ids)}개")
 
     def __len__(self):
@@ -67,7 +75,7 @@ class CylindricalSurfaceDataset(Dataset):
         return torch.from_numpy(inputs), torch.from_numpy(target)
 
 
-def save_checkpoint(model, path, component, disk_radius_m):
+def save_checkpoint(model, path, component, disk_radius_m, radius_over_rd=CYLINDER_RADIUS_OVER_RD):
     torch.save(
         {
             "state_dict": model.state_dict(),
@@ -79,7 +87,8 @@ def save_checkpoint(model, path, component, disk_radius_m):
             "out_channels": 1,
             "base_channels": BASE_CHANNELS,
             "target_scale": TARGET_SCALE,
-            "surface": "cylinder_r_equals_2RD",
+            "surface": f"cylinder_r_equals_{radius_over_rd:g}RD",
+            "radius_over_rd": float(radius_over_rd),
         },
         path,
     )
@@ -92,6 +101,14 @@ def train_one_component(component, device, data_root=DATA_ROOT, csv_path=CSV_PAT
     if epochs < 1 or batch_size < 1:
         raise ValueError("epochs and batch_size must be positive")
     dataset = CylindricalSurfaceDataset(data_root, component, csv_path)
+    model_path = Path(model_dir) / f"rotor_unet_cyl2d_{component}.pth"
+    if model_path.is_file():
+        checkpoint = torch.load(model_path, map_location="cpu")
+        validate_checkpoint(checkpoint, dataset.disk_radius_m, dataset.radius_over_rd)
+        if checkpoint.get("component", component) != component:
+            raise ValueError("Existing model component differs from its filename")
+        print(f"  [재사용] {model_path}")
+        return
     loader = DataLoader(
         dataset,
         batch_size=batch_size,
@@ -124,7 +141,7 @@ def train_one_component(component, device, data_root=DATA_ROOT, csv_path=CSV_PAT
 
     Path(model_dir).mkdir(parents=True, exist_ok=True)
     model_path = Path(model_dir) / f"rotor_unet_cyl2d_{component}.pth"
-    save_checkpoint(model, model_path, component, dataset.disk_radius_m)
+    save_checkpoint(model, model_path, component, dataset.disk_radius_m, dataset.radius_over_rd)
     print(f"  저장: {model_path}")
 
 
@@ -135,10 +152,32 @@ if __name__ == "__main__":
     parser.add_argument("--model-dir", type=Path, default=Path("."))
     parser.add_argument("--epochs", type=int, default=NUM_EPOCHS)
     parser.add_argument("--batch-size", type=int, default=BATCH_SIZE)
+    parser.add_argument("--sa-data-root", type=Path)
+    parser.add_argument("--sa-model-dir", type=Path)
     args = parser.parse_args()
     device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
     print(f"device: {device}")
-    for velocity_component in COMPONENTS:
-        train_one_component(velocity_component, device, args.data_root, args.csv,
-                            args.model_dir, args.epochs, args.batch_size)
-    print("\n전체 완료: rotor_unet_cyl2d_u/v/w.pth")
+    sa_root = args.sa_data_root
+    if sa_root is None:
+        candidate = args.data_root.with_name("dataset_zrd_sa")
+        if candidate.is_dir():
+            sa_root = candidate
+    regions = [(args.data_root, args.model_dir, CYLINDER_RADIUS_OVER_RD)]
+    if sa_root is not None:
+        sa_models = args.sa_model_dir or args.model_dir.resolve().with_name("models_zrd_sa")
+        if sa_root.resolve() == args.data_root.resolve() or sa_models.resolve() == args.model_dir.resolve():
+            raise ValueError("FATO and SA require separate dataset/model directories")
+        regions.append((sa_root, sa_models, SA_RADIUS_OVER_RD))
+    elif args.sa_model_dir is not None:
+        raise ValueError("--sa-model-dir requires an SA dataset")
+    # Validate both regions before any training starts.
+    for root, _, ratio in regions:
+        dataset = CylindricalSurfaceDataset(root, "u", args.csv)
+        if dataset.radius_over_rd != ratio:
+            raise ValueError("Dataset region differs from its selected model directory")
+    for root, models, ratio in regions:
+        print(f"Region: {'FATO' if ratio == CYLINDER_RADIUS_OVER_RD else 'SA'}")
+        for velocity_component in COMPONENTS:
+            train_one_component(velocity_component, device, root, args.csv,
+                                models, args.epochs, args.batch_size)
+    print("\\n전체 완료: FATO/SA 영역별 U/V/W 모델")

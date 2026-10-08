@@ -164,8 +164,10 @@ def build_figure(theta_deg, z_m, radius_m, cfd, prediction, case_id="", view="3d
     return first
 
 
-def load_comparison(path):
-    with np.load(path, allow_pickle=False) as archive:
+def load_comparison(path, region="FATO"):
+    prefix = "sa_" if region == "SA" else ""
+    with np.load(path, allow_pickle=False) as source:
+        archive = {key[len(prefix):]: source[key] for key in source.files if key.startswith(prefix)}
         return dict(theta_deg=archive["theta_deg"], z_m=archive["z_m"],
                     radius_m=float(archive["cylinder_radius_m"]),
                     rd_m=float(archive["disk_radius_m"]) if "disk_radius_m" in archive else None,
@@ -174,12 +176,13 @@ def load_comparison(path):
                     prediction={key: archive[f"prediction_{key}"] for key in FIELDS})
 
 
-def build_static_figure(theta_deg, z_m, radius_m, cfd, prediction, case_id="", rd_m=None):
+def build_static_figure(theta_deg, z_m, radius_m, cfd, prediction, case_id="", rd_m=None,
+                        radius_over_rd=CYLINDER_RADIUS_OVER_RD):
     """Matching PNG with two nonoverlapping extrema panels per field."""
     import matplotlib.pyplot as plt
 
     fields = comparison_fields(cfd, prediction)
-    stats, mask, bounds = error_statistics(theta_deg, z_m, radius_m, cfd, prediction, rd_m)
+    stats, mask, bounds = error_statistics(theta_deg, z_m, radius_m, cfd, prediction, rd_m, radius_over_rd)
     theta, heights = np.asarray(theta_deg), np.asarray(z_m)[mask]
     fig, axes = plt.subplots(4, 3, figsize=(22, 17))
     fig.subplots_adjust(left=.05, right=.72, top=.91, bottom=.05, hspace=.48, wspace=.43)
@@ -214,7 +217,7 @@ def build_static_figure(theta_deg, z_m, radius_m, cfd, prediction, case_id="", r
         nmae = stats[key]["nmae_pct"]
         rate = "N/A" if nmae is None else f"{nmae:.3g}%"
         ax.set_title(f"Absolute error · {label}\nMAE={stats[key]['mae_mps']:.5f} m/s; NMAE={rate}")
-    fig.suptitle(f"{case_id} | r=2RD | {bounds[0]:.6g} <= z <= {bounds[1]:.6g} m (z <= RD)\n"
+    fig.suptitle(f"{case_id} | r={radius_over_rd:g}RD | {bounds[0]:.6g} <= z <= {bounds[1]:.6g} m (z <= RD)\n"
                  "NMAE = MAE / mean |CFD| x 100; point rate = |prediction-CFD| / |CFD| x 100\n"
                  "Zero CFD excluded from point rate; extrema use original displayed samples; ties: first z, then theta",
                  fontsize=12)
@@ -223,7 +226,17 @@ def build_static_figure(theta_deg, z_m, radius_m, cfd, prediction, case_id="", r
 
 def export_html(input_path, output_path, sa_input_path=None):
     data = load_comparison(input_path)
-    figure = build_figure(**data, sa_data=load_comparison(sa_input_path) if sa_input_path is not None else None)
+    if sa_input_path is not None:
+        sa_data = load_comparison(sa_input_path)
+    else:
+        if hasattr(input_path, "seek"):
+            input_path.seek(0)
+        with np.load(input_path, allow_pickle=False) as archive:
+            bundled_sa = "sa_cylinder_radius_m" in archive
+        if hasattr(input_path, "seek"):
+            input_path.seek(0)
+        sa_data = load_comparison(input_path, "SA") if bundled_sa else None
+    figure = build_figure(**data, sa_data=sa_data)
     output = Path(output_path)
     output.parent.mkdir(parents=True, exist_ok=True)
     figure.write_html(str(output), include_plotlyjs=True, full_html=True, auto_play=False,
