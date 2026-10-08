@@ -1,5 +1,6 @@
 """RD-limited display and full-resolution error statistics (physical SI units)."""
 import numpy as np
+from data_utils_cylindrical import CYLINDER_RADIUS_OVER_RD, CYLINDER_RADII_OVER_RD
 
 FIELDS = ("u_r", "u_theta", "u_z", "magnitude")
 
@@ -17,7 +18,7 @@ def display_window(z_m, rd_m):
     return mask, (float(z[0]), float(min(rd, z[-1])))
 
 
-def error_statistics(theta_deg, z_m, radius_m, cfd, prediction, rd_m=None):
+def error_statistics(theta_deg, z_m, radius_m, cfd, prediction, rd_m=None, radius_over_rd=CYLINDER_RADIUS_OVER_RD):
     """Extrema use original samples, never the decimated/seam/interpolated mesh.
 
     NMAE retains the existing aggregate formula. A spatial percentage maximum
@@ -25,9 +26,12 @@ def error_statistics(theta_deg, z_m, radius_m, cfd, prediction, rd_m=None):
     Ties select the first point in increasing z then theta order.
     """
     radius = float(radius_m)
-    rd = radius / 2 if rd_m is None else float(rd_m)
-    if not np.isfinite(radius) or radius <= 0 or not np.isclose(radius, 2 * rd, rtol=1e-6):
-        raise ValueError("Expected cylinder radius = 2 RD")
+    ratio = float(radius_over_rd)
+    if ratio not in CYLINDER_RADII_OVER_RD:
+        raise ValueError("Expected FATO or SA radius/RD")
+    rd = radius / ratio if rd_m is None else float(rd_m)
+    if not np.isfinite(radius) or radius <= 0 or not np.isclose(radius, ratio * rd, rtol=1e-6):
+        raise ValueError(f"Expected cylinder radius = {ratio:g} RD")
     theta, z = np.asarray(theta_deg, dtype=float), np.asarray(z_m, dtype=float)
     mask, bounds = display_window(z, rd)
     if (theta.ndim != 1 or theta.size < 2 or not np.isfinite(theta).all()
@@ -87,3 +91,21 @@ def metrics_row(case_id, stats, bounds):
             for coordinate in ("theta_deg", "x_m", "y_m", "z_m"):
                 row[f"max_{kind}_{field}_{coordinate}"] = None if p is None else p[coordinate]
     return row
+
+
+def region_component_menus(region, component, labels, has_sa):
+    """Shared offline Plotly controls; unavailable SA never selects FATO data."""
+    def button(label, target):
+        return dict(label=label, method="animate", args=[[target], dict(
+            mode="immediate", frame=dict(duration=0, redraw=True),
+            transition=dict(duration=0))])
+
+    regions = [button("FATO", "FATO/0")]
+    regions.append(button("SA", "SA/0") if has_sa else
+                   dict(label="SA 데이터 없음", method="skip", args=[]))
+    return [dict(type="buttons", direction="right", buttons=regions,
+                 active=0 if region == "FATO" else 1, x=0, y=1.24,
+                 xanchor="left", yanchor="top", showactive=has_sa),
+            dict(type="buttons", direction="right",
+                 buttons=[button(label, f"{region}/{i}") for i, label in enumerate(labels)],
+                 active=component, x=0, y=1.12, xanchor="left", yanchor="top")]

@@ -42,7 +42,7 @@ def show_validation_results(directory, case_ids):
         with output:
             output.clear_output(wait=True)
             figure = build_figure(**load_comparison(chooser.value), view=view.value)
-            figure.show(renderer="colab")
+            figure.show(renderer="colab", auto_play=False)
 
     def download(_):
         from google.colab import files

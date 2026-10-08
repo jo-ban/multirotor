@@ -6,7 +6,8 @@ from pathlib import Path
 import numpy as np
 import plotly.graph_objects as go
 from plotly.subplots import make_subplots
-from display_analysis import error_statistics, point_label
+from display_analysis import error_statistics, point_label, region_component_menus
+from data_utils_cylindrical import CYLINDER_RADIUS_OVER_RD, SA_RADIUS_OVER_RD
 
 FIELDS = ("u_r", "u_theta", "u_z", "magnitude")
 LABELS = ("U_r (radial)", "U_theta (azimuthal)", "U_z (axial)", "|U| (speed)")
@@ -30,8 +31,9 @@ def comparison_fields(cfd, prediction):
     return result
 
 
-def build_figure(theta_deg, z_m, radius_m, cfd, prediction, case_id="", view="3d", rd_m=None):
-    """Four rows, CFD/prediction/absolute-error columns; metrics use full grids.
+def _component_figure(theta_deg, z_m, radius_m, cfd, prediction, case_id="", view="3d", rd_m=None,
+                      component=0, radius_over_rd=CYLINDER_RADIUS_OVER_RD):
+    """One component, CFD/prediction/absolute-error columns; metrics use full grids.
 
     The 3D display samples at most 64 heights and 96 angles for responsiveness.
     No angular averaging or axisymmetric reconstruction is performed.
@@ -48,7 +50,7 @@ def build_figure(theta_deg, z_m, radius_m, cfd, prediction, case_id="", view="3d
             or theta[-1] - theta[0] >= 360 or not np.isfinite(radius) or radius <= 0
             or fields[0][0].shape != (heights.size, theta.size)):
         raise ValueError("Invalid cylinder coordinates or field shape")
-    stats, mask, bounds = error_statistics(theta, heights, radius, cfd, prediction, rd_m)
+    stats, mask, bounds = error_statistics(theta, heights, radius, cfd, prediction, rd_m, radius_over_rd)
     heights = heights[mask]
     fields = [tuple(value[mask] for value in values) for values in fields]
     titles = []
@@ -58,26 +60,28 @@ def build_figure(theta_deg, z_m, radius_m, cfd, prediction, case_id="", view="3d
                 else "N/A (mean |CFD| = 0)")
         titles.extend((f"CFD · {label}", f"Prediction · {label}",
                        f"Abs error · MAE={error.mean():.4f} m/s<br>NMAE={rate}"))
-    fig = make_subplots(rows=4, cols=3, specs=[[{"type": "scene" if view == "3d" else "xy"}
-                                              for _ in range(3)] for _ in range(4)],
-                        subplot_titles=titles, horizontal_spacing=0.08, vertical_spacing=0.07)
+    fig = make_subplots(rows=1, cols=3, specs=[[{"type": "scene" if view == "3d" else "xy"}
+                                              for _ in range(3)]],
+                        subplot_titles=titles[component * 3:component * 3 + 3], horizontal_spacing=0.08, vertical_spacing=0.07)
     zi = np.unique(np.linspace(0, heights.size - 1, min(64, heights.size)).astype(int))
     ti = np.unique(np.linspace(0, theta.size - 1, min(96, theta.size)).astype(int))
     angles, z = np.meshgrid(np.deg2rad(np.r_[theta[ti], theta[ti][0] + 360]), heights[zi])
     x, y = radius * np.cos(angles), radius * np.sin(angles)
     for row, (label, values) in enumerate(zip(LABELS, fields), 1):
+        if row != component + 1:
+            continue
         limit = max(float(np.max(np.abs(values[0]))), float(np.max(np.abs(values[1]))), 1e-9)
         for col, value in enumerate(values, 1):
             error = col == 3
             low = 0 if error or row == 4 else -limit
             high = max(float(value.max()), 1e-9) if error else limit
             scale = "Reds" if error else ("Turbo" if row == 4 else "RdBu_r")
-            index = (row - 1) * 3 + col
+            index = col
             axis = ("scene" if index == 1 else f"scene{index}")
             domain = fig.layout[axis].domain if view == "3d" else None
-            colorbar = dict(title="m/s", thickness=9, len=0.17,
+            colorbar = dict(title="m/s", thickness=9, len=0.75,
                             x=(domain.x[1] if domain else (0.28, 0.64, 1.0)[col - 1]),
-                            y=(sum(domain.y) / 2 if domain else 0.9 - (row - 1) * 0.265))
+                            y=(sum(domain.y) / 2 if domain else 0.5))
             if view == "3d":
                 sampled = value[np.ix_(zi, ti)]
                 closed = np.column_stack((sampled, sampled[:, 0]))
@@ -91,7 +95,7 @@ def build_figure(theta_deg, z_m, radius_m, cfd, prediction, case_id="", view="3d
                     colorscale=scale, colorbar=colorbar,
                     hovertemplate="theta=%{x:.2f}°<br>z=%{y:.3f} m"
                                   "<br>value=%{z:.5f} m/s<extra></extra>")
-            fig.add_trace(trace, row=row, col=col)
+            fig.add_trace(trace, row=1, col=col)
     if view == "3d":
         fig.update_scenes(zaxis_range=bounds, xaxis_title="x relative to center [m]", yaxis_title="y relative to center [m]",
                           zaxis_title="z [m]", aspectmode="data", dragmode="orbit",
@@ -102,7 +106,9 @@ def build_figure(theta_deg, z_m, radius_m, cfd, prediction, case_id="", view="3d
     # Fixed, separate text panels avoid colliding annotations during rotation.
     # Markers use the full-resolution extrema, independently of surface sampling.
     for row, key in enumerate(FIELDS, 1):
-        index = row * 3
+        if row != component + 1:
+            continue
+        index = 3
         domain = (fig.layout[f"scene{index}"].domain.y if view == "3d"
                   else fig.layout[f"yaxis{index}"].domain)
         for offset, (kind, letter, color, symbol) in enumerate((
@@ -115,23 +121,47 @@ def build_figure(theta_deg, z_m, radius_m, cfd, prediction, case_id="", view="3d
             fig.add_annotation(x=1.13, y=domain[1] - offset * (domain[1] - domain[0]) * .55,
                                xref="paper", yref="paper", xanchor="left", yanchor="top",
                                text=text, showarrow=False, align="left", font=dict(size=11, color=color))
-            if p is None:
-                continue
             common = dict(mode="markers+text", text=[letter], name=f"{key} {letter}",
                           textposition="top center" if offset == 0 else "bottom center",
                           marker=dict(size=10 if offset == 0 else 6, color=color, symbol=symbol),
                           hovertemplate=text + "<extra></extra>", showlegend=False)
             if view == "3d":
-                marker = go.Scatter3d(x=[p['x_m']], y=[p['y_m']], z=[p['z_m']], **common)
+                marker = go.Scatter3d(x=[] if p is None else [p['x_m']], y=[] if p is None else [p['y_m']], z=[] if p is None else [p['z_m']], **common)
             else:
-                marker = go.Scatter(x=[p['theta_deg']], y=[p['z_m']], **common)
-            fig.add_trace(marker, row=row, col=3)
+                marker = go.Scatter(x=[] if p is None else [p['theta_deg']], y=[] if p is None else [p['z_m']], **common)
+            fig.add_trace(marker, row=1, col=3)
     fig.update_layout(title=(f"{escape(str(case_id))} · CFD / prediction / absolute error · r={radius:.4f} m"
                              f"<br><sup>Display/metrics: {bounds[0]:.6g} ≤ z ≤ {bounds[1]:.6g} m (z ≤ RD); original samples</sup>"
                              "<br><sup>NMAE = MAE / mean |CFD| × 100; point rate = |prediction-CFD| / |CFD| × 100; CFD=0 excluded from rate</sup>"),
-                      template="plotly_white", height=1600, width=1650, margin=dict(l=40, r=430, t=150, b=45),
+                      template="plotly_white", height=800, width=1650, margin=dict(l=40, r=430, t=240, b=45),
                       showlegend=False, uirevision="validation")
     return fig
+
+
+def build_figure(theta_deg, z_m, radius_m, cfd, prediction, case_id="", view="3d", rd_m=None,
+                 sa_data=None):
+    """Reuse three panels; optional independent SA arrays use the same controls.
+
+    sa_data has the same coordinate/field keys as load_comparison. No SA values
+    are inferred from FATO. Frames replace data, annotations and color ranges.
+    """
+    regions = {"FATO": dict(theta_deg=theta_deg, z_m=z_m, radius_m=radius_m,
+                            cfd=cfd, prediction=prediction, case_id=case_id, rd_m=rd_m)}
+    if sa_data is not None:
+        regions["SA"] = sa_data
+    frames = []
+    first = None
+    for region, data in regions.items():
+        for component in range(len(FIELDS)):
+            fig = _component_figure(**data, view=view, component=component,
+                    radius_over_rd=CYLINDER_RADIUS_OVER_RD if region == "FATO" else SA_RADIUS_OVER_RD)
+            fig.update_layout(updatemenus=region_component_menus(region, component, LABELS, sa_data is not None))
+            if first is None:
+                first = fig
+            frames.append(go.Frame(name=f"{region}/{component}", data=fig.data,
+                                   traces=list(range(len(fig.data))), layout=fig.layout))
+    first.frames = frames
+    return first
 
 
 def load_comparison(path):
@@ -191,12 +221,12 @@ def build_static_figure(theta_deg, z_m, radius_m, cfd, prediction, case_id="", r
     return fig
 
 
-def export_html(input_path, output_path):
+def export_html(input_path, output_path, sa_input_path=None):
     data = load_comparison(input_path)
-    figure = build_figure(**data)
+    figure = build_figure(**data, sa_data=load_comparison(sa_input_path) if sa_input_path is not None else None)
     output = Path(output_path)
     output.parent.mkdir(parents=True, exist_ok=True)
-    figure.write_html(str(output), include_plotlyjs=True, full_html=True,
+    figure.write_html(str(output), include_plotlyjs=True, full_html=True, auto_play=False,
                       config={"responsive": True, "scrollZoom": True, "displaylogo": False})
     return figure
 

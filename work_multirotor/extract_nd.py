@@ -8,6 +8,7 @@ import pyvista as pv
 
 from data_utils_cylindrical import (
     COORDINATE_SYSTEM,
+    CYLINDER_RADIUS_OVER_RD,
     center_from_row,
     disk_loading_from_row,
     disk_loading_from_diameter,
@@ -20,7 +21,6 @@ from normalization import nondim_velocity
 
 
 # 원통 표면 설정 -------------------------------------------------------------
-CYLINDER_RADIUS_OVER_RD = 2.0      # 원통 반경 / 4로터 전체 외접원 반경 R_D
 RESOLUTION_Z_THETA = (256, 256)    # (Nz, Ntheta), 각 값은 16의 배수 권장
 FAIL_ON_INVALID_POINTS = True       # 원통 일부가 CFD 도메인 밖이면 즉시 중단
 

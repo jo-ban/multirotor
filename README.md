@@ -124,7 +124,9 @@ CSV에서 load, disk_loading, DL 열은 필요 없으며, 기존 열이 남아 �
 - 예측: 기존 2D PNG와 회전 HTML을 유지하며 Colab에 HTML 다운로드 버튼을 표시합니다.
 - 검증: 케이스별 `comparison_<case_id>.html`, 원본 비교 배열 `.npz`,
   네 물리량의 4행 × 3열 `error_<case_id>.png`, 기존 MAE CSV를 저장합니다.
-- 비교 HTML 하나에 U_r, U_theta, U_z, 속력의 CFD / 예측 / 절대오차 원통 12개를 표시합니다.
+- 비교 HTML은 U_r, U_theta, U_z, 속력 버튼으로 성분을 선택하고 CFD / 예측 / 절대오차 원통 3개를 표시합니다.
+  기본은 U_r이며 선택한 성분의 MAE/NMAE와 A/B 주석·마커만 표시합니다.
+  최상위 FATO / SA 영역 버튼 아래에 성분 버튼이 있습니다. SA 데이터가 없으면 `SA 데이터 없음`으로 안내합니다.
   마우스로 회전·확대하고 위치별 m/s를 확인할 수 있습니다.
 - Colab에서는 검증 케이스 선택 및 회전 3D / 전개면 2D 전환이 가능합니다.
   HTML 다운로드는 선택 사항이며 결과는 Drive에도 저장됩니다.
@@ -173,3 +175,17 @@ python work_multirotor/evaluate_error.py --replot --output-dir /path/to/results/
 ## Colab 데이터셋 검사
 
 캐시는 CSV의 전체 folder 목록, 케이스 수, U/V/W 배열, 형상·좌표·자동 DL이 모두 일치할 때만 재사용합니다. 한 케이스만 저장된 불완전 캐시는 재추출합니다. 추출 로그에는 [현재/전체] 폴더명과 최종 완료 개수가 표시됩니다. CSV에 등록되지 않은 원본 폴더는 추출하지 않습니다. CFD 원본을 수정한 경우 REBUILD_DATASET=True로 설정하세요. 동일 캐시 폴더를 갱신하고 반복 실행해도 FileExistsError가 발생하지 않습니다.
+
+## FATO / SA 표시 기반 (단계 1)
+
+FATO는 반경 2RD, SA(Safety Area)는 별도의 반경 2.5RD 원통 격자입니다.
+반경 상수와 리스트는 `data_utils_cylindrical.py` 한 곳에 정의합니다.
+현재 추출·학습·예측·평가 파이프라인은 FATO만 지원하며 SA 데이터·모델을 생성하지 않습니다.
+뷰어 API의 선택 인자 `sa_data`(검증), `sa_path`(예측)에 독립된 SA 데이터를 전달하면
+같은 영역/성분 UI로 볼 수 있습니다. 검증 `sa_data`는 `load_comparison`과 같은 키를 사용합니다.
+두 HTML 내보내기 함수의 `sa_input_path`도 독립된 SA NPZ를 받습니다.
+SA의 RD 메타데이터가 없으면 반경/SA 반경비로 복원하며, FATO의 기존 반경/2 규칙은 유지합니다.
+SA를 FATO 배열에서 계산하거나 추론하지 않습니다. SA 추출·별도 모델·노트북 단계는 사용자 승인 후 진행합니다.
+
+HTML 갱신은 기존 `evaluate_error.py --html-only --output-dir .../results/evaluation`을 사용하면 됩니다.
+`--replot`도 기존 이름의 HTML/PNG/통계 CSV를 갱신합니다. CSV 입력·case_id와 결과 경로는 변경하지 않습니다.

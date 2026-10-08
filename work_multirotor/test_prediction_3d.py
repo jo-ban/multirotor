@@ -25,10 +25,17 @@ class PredictionViewerTests(unittest.TestCase):
             np.testing.assert_allclose(surface.z[:, 0], [-2, 0, 2])
             np.testing.assert_allclose(surface.surfacecolor[:, -1], values[:, 0])
             self.assertEqual(surface.surfacecolor.shape, (3, 5))
-            for i, button in enumerate(fig.layout.updatemenus[0].buttons):
-                visibility = button.args[0]["visible"]
-                self.assertEqual(list(visibility[:4]), [j == i for j in range(4)])
-                self.assertTrue(all(visibility[4:]))
+            self.assertEqual(len(fig.data), 9)  # one surface and eight rotor lines
+            self.assertEqual(len(fig.frames), 4)
+            self.assertEqual(fig.layout.updatemenus[0].buttons[1].method, "skip")
+            for i, button in enumerate(fig.layout.updatemenus[1].buttons):
+                self.assertEqual(button.args[0][0], f"FATO/{i}")
+                self.assertEqual(fig.frames[i].layout.updatemenus[1].active, i)
+            sa_source = Path(folder) / "sa.npz"
+            np.savez(sa_source, **{**data, "cylinder_radius_m": 5, "disk_radius_m": 2})
+            both = build_figure(source, sa_path=sa_source)
+            self.assertEqual(len(both.frames), 8)
+            np.testing.assert_allclose(both.frames[4].data[0].x ** 2 + both.frames[4].data[0].y ** 2, 25)
             html = (Path(folder) / "viewer.html").read_text(encoding="utf-8")
             self.assertIn("Plotly.newPlot", html)
             self.assertGreater(len(html), 1_000_000)  # bundled offline runtime

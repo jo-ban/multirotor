@@ -41,6 +41,22 @@ class DisplayAnalysisTests(unittest.TestCase):
         self.assertEqual(row['max_error_u_r_mps'], 8)
         self.assertEqual(row['max_percent_u_r_pct'], 1000)
 
+    def test_region_radius_preserves_fato_statistics(self):
+        from data_utils_cylindrical import CYLINDER_RADII_OVER_RD, SA_RADIUS_OVER_RD
+        self.assertEqual(CYLINDER_RADII_OVER_RD, [2.0, SA_RADIUS_OVER_RD])
+        original, _, _ = error_statistics(**self.args)
+        explicit, _, _ = error_statistics(**self.args, radius_over_rd=CYLINDER_RADII_OVER_RD[0])
+        self.assertEqual(original, explicit)
+        sa, mask, bounds = error_statistics(**{**self.args, "radius_m": 5},
+                                             radius_over_rd=SA_RADIUS_OVER_RD)
+        for key in FIELDS:
+            self.assertEqual(sa[key]['mae_mps'], original[key]['mae_mps'])
+            self.assertEqual(sa[key]['nmae_pct'], original[key]['nmae_pct'])
+            self.assertAlmostEqual(sa[key]['max_error']['y_m'], 5)
+        with self.assertRaises(ValueError):
+            error_statistics(**{**self.args, "radius_m": 5})
+
+
     def test_negative_and_tiny_references_are_not_excluded(self):
         self.cfd['u_r'][0, 1] = -1e-12
         self.pred['u_r'][0, 1] = 1e-12
@@ -62,19 +78,19 @@ class DisplayAnalysisTests(unittest.TestCase):
     def test_plot_markers_and_separate_annotation_panels(self):
         for view in ('2d', '3d'):
             fig = build_figure(**self.args, view=view)
-            self.assertEqual(len(fig.data), 20)
-            self.assertEqual(fig.data[12].name, 'u_r A')
-            self.assertEqual(fig.data[13].name, 'u_r B')
-            self.assertEqual(len(fig.layout.annotations), 20)
-            self.assertNotEqual(fig.layout.annotations[12].y, fig.layout.annotations[13].y)
+            self.assertEqual(len(fig.data), 5)
+            self.assertEqual(fig.data[3].name, 'u_r A')
+            self.assertEqual(fig.data[4].name, 'u_r B')
+            self.assertEqual(len(fig.layout.annotations), 5)
+            self.assertNotEqual(fig.layout.annotations[3].y, fig.layout.annotations[4].y)
             if view == '3d':
                 self.assertEqual(fig.layout.scene.zaxis.range, (0, 2))
-                self.assertEqual(fig.data[12].z[0], 1)
-                self.assertEqual(fig.data[13].z[0], 2)
+                self.assertEqual(fig.data[3].z[0], 1)
+                self.assertEqual(fig.data[4].z[0], 2)
             else:
                 self.assertEqual(fig.layout.yaxis.range, (0, 2))
-                self.assertEqual(fig.data[12].x[0], 90)
-                self.assertEqual(fig.data[13].x[0], 180)
+                self.assertEqual(fig.data[3].x[0], 90)
+                self.assertEqual(fig.data[4].x[0], 180)
 
     def test_unsampled_extreme_is_preserved(self):
         shape = (128, 192)
@@ -84,7 +100,7 @@ class DisplayAnalysisTests(unittest.TestCase):
         fig = build_figure(np.linspace(0, 360, 192, endpoint=False), np.linspace(0, 2, 128),
                            4, cfd, pred)
         self.assertEqual(fig.data[0].surfacecolor.shape, (64, 97))
-        self.assertEqual(fig.data[12].z[0], 2/127)
+        self.assertEqual(fig.data[3].z[0], 2/127)
 
     def test_invalid_or_single_sample_window(self):
         with self.assertRaises(ValueError):
