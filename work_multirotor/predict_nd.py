@@ -14,13 +14,13 @@ from data_utils_cylindrical import (
     INPUT_CHANNELS,
     validate_checkpoint,
     plot_extent,
-    cartesian_to_cylindrical_velocity,
     make_input_surface,
     FIXED_RD_M,
     geometry_from_rd_ratio,
     disk_loading_from_diameter,
 )
 from model_cylindrical import CylindricalUNet2D
+from joint_checkpoint import load_joint_model
 from normalization import dimensional_velocity
 from plot_hover import attach_velocity_hover
 
@@ -35,6 +35,8 @@ def load_component_model(component, device, model_dir=None, expected_rd=None,
         raise FileNotFoundError(f"{path}가 없습니다. train_nd.py로 먼저 학습하세요.")
     checkpoint = torch.load(path, map_location=device)
     validate_checkpoint(checkpoint, expected_rd, expected_radius_over_rd)
+    if checkpoint["state_dict"]["out_conv.weight"].shape[0] != 1:
+        raise ValueError("Legacy component loader requires one Cartesian channel; use load_joint_model for joint cylindrical weights")
     model = CylindricalUNet2D(
         in_channels=4,
         out_channels=1,
@@ -91,36 +93,20 @@ def predict_cylindrical_surface(
     input_surface = make_input_surface(l_over_d, z_over_rd, shape_ztheta)
     inputs = torch.from_numpy(input_surface[None, ...]).to(device)
 
-    prediction_nd = {}
+    model, scale = load_joint_model(device, model_dir, disk_radius_m, radius_over_rd)
     with torch.no_grad():
-        for component in ("u", "v", "w"):
-            model, scale = load_component_model(component, device, model_dir, disk_radius_m, radius_over_rd)
-            prediction_nd[component] = (
-                model(inputs)[0, 0].cpu().numpy() / scale
-            ).astype(np.float32)
-            del model
-            if torch.cuda.is_available():
-                torch.cuda.empty_cache()
-
-    prediction = {
-        c: dimensional_velocity(prediction_nd[c], disk_loading).astype(np.float32)
-        for c in ("u", "v", "w")
-    }
-    magnitude = np.sqrt(
-        prediction["u"] ** 2 + prediction["v"] ** 2 + prediction["w"] ** 2
-    ).astype(np.float32)
-
-    nz, ntheta = map(int, shape_ztheta)
-    theta_rad = np.linspace(0.0, 2.0 * np.pi, ntheta, endpoint=False, dtype=np.float32)
+        prediction_nd = model(inputs)[0].cpu().numpy() / scale
+    del model
+    # These are already cylindrical components: restore only the common velocity unit.
+    cylindrical = {key: dimensional_velocity(prediction_nd[i], disk_loading).astype(np.float32)
+                   for i, key in enumerate(("u_r", "u_theta", "u_z"))}
+    magnitude = np.sqrt(sum(field ** 2 for field in cylindrical.values())).astype(np.float32)
+    theta_rad = np.linspace(0, 2 * np.pi, ntheta, endpoint=False, dtype=np.float32)
     theta_deg = np.rad2deg(theta_rad).astype(np.float32)
-
-    # 모델은 Cartesian (u, v, w)를 예측하므로, 축이 z인 원통좌표로 변환한다.
-    cylindrical = {
-        key: value.astype(np.float32)
-        for key, value in cartesian_to_cylindrical_velocity(
-            prediction["u"], prediction["v"], prediction["w"], theta_rad
-        ).items()
-    }
+    # Preserve Cartesian NPZ fields for existing consumers by the inverse transform.
+    prediction = dict(u=cylindrical["u_r"] * np.cos(theta_rad) - cylindrical["u_theta"] * np.sin(theta_rad),
+                      v=cylindrical["u_r"] * np.sin(theta_rad) + cylindrical["u_theta"] * np.cos(theta_rad),
+                      w=cylindrical["u_z"])
 
     payload = dict(
         u_mps=prediction["u"],

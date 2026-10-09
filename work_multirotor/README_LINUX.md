@@ -57,7 +57,7 @@ CFD 케이스에는 mesh와 U 결과가 있어야 합니다. 최신 시간을 �
 ```bash
 bash rotor.sh extract --data-root /data/OpenFOAM
 bash rotor.sh visualize
-bash rotor.sh train --epochs 100 --batch-size 4
+bash rotor.sh train --epochs 100 --batch-size 4 --lambda-gradient <weight>
 bash rotor.sh evaluate
 bash rotor.sh predict --help
 ```
@@ -77,7 +77,7 @@ CSV의 rotor_z는 추출 상한이 아닙니다. 좌표 원점을 임의로 이�
 | 명령 | 기본 출력 |
 | --- | --- |
 | extract | dataset_zrd/inputs 및 targets_u/v/w |
-| train | models_zrd/의 U/V/W 체크포인트 |
+| train | models_zrd/의 공동 원통 속도 best 체크포인트 |
 | visualize | results/visualize/PNG |
 | evaluate | results/evaluate/CSV 및 PNG |
 | predict | 대화형 Plot과 results/prediction_cylinder_r2RD.npz |
@@ -97,7 +97,7 @@ cases/case02,V
 ```
 
 ```bash
-bash rotor.sh train --csv split.csv
+bash rotor.sh train --csv split.csv --lambda-gradient <weight>
 bash rotor.sh evaluate --csv split.csv
 ```
 
@@ -130,7 +130,7 @@ Colab 노트북은 --no-show와 --plot-output을 사용해 결과를 표시합�
 공백이 있는 경로는 따옴표로 감싸세요. 재실행하면 같은 이름의 결과는 덮어씁니다.
 
 ```bash
-nohup bash rotor.sh train --epochs 100 > train.log 2>&1 &
+nohup bash rotor.sh train --epochs 100 --lambda-gradient <weight> > train.log 2>&1 &
 tail -f train.log
 bash rotor.sh test
 ```

@@ -36,13 +36,13 @@ class DoubleConv2D(nn.Module):
 
 
 class CylindricalUNet2D(nn.Module):
-    """원통 전개면(theta-z)의 속도 성분 하나를 예측하는 2D U-Net.
+    """원통 전개면(theta-z)의 속도 (ur, utheta, uz)를 공동 예측하는 2D U-Net.
 
     입력 shape : (B, 4, Nz, Ntheta)
-    출력 shape : (B, 1, Nz, Ntheta)
+    출력 shape : (B, 3, Nz, Ntheta)
     """
 
-    def __init__(self, in_channels=4, out_channels=1, base_channels=16):
+    def __init__(self, in_channels=4, out_channels=3, base_channels=16):
         super().__init__()
         b = base_channels
         self.enc1 = DoubleConv2D(in_channels, b)

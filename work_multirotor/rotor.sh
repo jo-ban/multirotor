@@ -9,12 +9,12 @@ Usage: bash rotor.sh COMMAND [OPTIONS]
   extract     Run extract_nd.py
   visualize   Run visualize_cylindrical_data.py (save PNG)
   view3d      Convert prediction NPZ to interactive HTML (--input required)
-  train       Run train_nd.py (U/V/W)
+  train       Run train_nd.py (joint ur/utheta/uz)
   evaluate    Run evaluate_error.py (validation cases)
   predict     Open interactive prediction plot with mouse velocity readout; save NPZ
   test        Run synthetic OpenFOAM pipeline test
   help        Show this help
-Example: bash rotor.sh train --epochs 100 --batch-size 4
+Example: bash rotor.sh train --epochs 100 --batch-size 4 --lambda-gradient <weight>
 Example: bash rotor.sh extract --data-root /data/OpenFOAM
 Prediction: bash rotor.sh predict --rd 9.3101751 --l-over-d 1.6 --ground-z <actual> --z-max <actual>
 Command options: bash rotor.sh train --help

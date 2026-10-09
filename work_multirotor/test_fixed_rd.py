@@ -37,7 +37,8 @@ class FixedRDTest(unittest.TestCase):
         with tempfile.TemporaryDirectory() as folder:
             root = Path(folder)
             (root / 'inputs').mkdir()
-            (root / 'targets_u').mkdir()
+            for c in 'uvw':
+                (root / f'targets_{c}').mkdir()
             for case_id, source, ratio in [('train', '001', 1.5), ('valid', '002', 1.6)]:
                 l_value, d_value = geometry_from_rd_ratio(FIXED_RD_M, ratio)
                 np.savez(root / 'inputs' / f'input_{case_id}.npz',
@@ -48,10 +49,11 @@ class FixedRDTest(unittest.TestCase):
                          center_xy_m=[0, 0], rotor_z_m=9.3101752, ground_z_m=0,
                          height_m=9.3101752, height_over_rd=9.3101752 / FIXED_RD_M,
                          shape_ztheta=[32, 32])
-                np.save(root / 'targets_u' / f'u_{case_id}.npy', np.zeros((32, 32)))
+                for c in 'uvw':
+                    np.save(root / f'targets_{c}' / f'{c}_{case_id}.npy', np.zeros((32, 32)))
             csv = root / 'split.csv'
             csv.write_text('folder,type,RD,L_over_D,load,ground_z\n002,V,999,999,999,999\n')
-            dataset = CylindricalSurfaceDataset(root, 'u', csv)
+            dataset = CylindricalSurfaceDataset(root, csv)
             self.assertEqual(dataset.case_ids, ['train'])
             self.assertAlmostEqual(float(dataset[0][0][0, 0, 0]), 1.5)
             frame = pd.read_csv(csv, dtype={'folder': str})

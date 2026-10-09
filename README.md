@@ -32,7 +32,7 @@ GitHub의 최신 코드를 사용합니다.
 
 노트북의 `DRIVE_DATA`, `DRIVE_CSV`, `DRIVE_RESULTS`를 실제 Google Drive 경로로
 설정하고 위에서 아래로 실행합니다. GitHub 코드 안에 개인 Drive 경로를 넣을 필요가 없습니다.
-원본을 `/content`로 복사해 추출·무차원화·학습하고, 데이터셋과 모델 3개(U/V/W),
+원본을 `/content`로 복사해 추출·무차원화·학습하고, 데이터셋과 영역별 공동 모델(ur/utheta/uz 3채널),
 예측 NPZ/PNG, 평가 CSV/PNG를 Drive의 지정된 고정 폴더에 저장하고 같은 이름의 파일을 덮어씁니다. 날짜별 결과 폴더는 만들지 않습니다.
 Colab의 로컬 작업 공간은 임시이며 실제 데이터가 메모리와 디스크에 들어가야 합니다.
 
@@ -63,7 +63,7 @@ Windows의 `C:\...` 경로는 Colab에서 사용할 수 없습니다. `001` 같�
 
 ```bash
 python work_multirotor/extract_nd.py --csv /content/raw/cases.csv --data-root /content/raw --output-root /content/dataset_nd
-python work_multirotor/train_nd.py --csv /content/raw/cases.csv --data-root /content/dataset_nd --model-dir /content/models --epochs 100
+python work_multirotor/train_nd.py --csv /content/raw/cases.csv --data-root /content/dataset_nd --model-dir /content/models --epochs 100 --lambda-gradient <weight>
 python work_multirotor/evaluate_error.py --csv /content/raw/cases.csv --data-root /content/dataset_nd --model-dir /content/models --output-dir /content/results/evaluation --no-show
 ```
 
@@ -185,7 +185,7 @@ python work_multirotor/evaluate_error.py --replot --output-dir /path/to/results/
 원통이 도메인 밖이면 기존 FAIL_ON_INVALID_POINTS 규칙으로 실패합니다.
 RD=9.3101751 m, center=(0,0), 절대 z좌표와 기존 CSV 형식·파서는 유지합니다.
 
-학습 셀은 두 데이터셋에서 별도 U/V/W 모델을 학습합니다.
+학습 셀은 두 데이터셋에서 영역별 원통 속도 공동 모델을 학습합니다.
 FATO는 models_zrd, SA는 models_zrd_sa를 사용하며 기존 모델은 검증 후 재사용합니다.
 기존 데이터도 덮어쓰지 않습니다. 원본 CFD가 바뀌어 기존 메타데이터와 충돌하면 중단합니다.
 SA는 원본 CFD에서 추출해야 하며 FATO NPZ에서 만들 수 없습니다.
@@ -203,5 +203,49 @@ HTML은 Plotly를 포함하는 독립 파일이며 --replot / --html-only는 기
 
 ```bash
 python work_multirotor/extract_nd.py --csv /path/to/cases.csv --output-root /path/to/dataset_zrd --sa-output-root /path/to/dataset_zrd_sa
-python work_multirotor/train_nd.py --csv /path/to/cases.csv --data-root /path/to/dataset_zrd --sa-data-root /path/to/dataset_zrd_sa --model-dir /path/to/models_zrd --sa-model-dir /path/to/models_zrd_sa
+python work_multirotor/train_nd.py --csv /path/to/cases.csv --data-root /path/to/dataset_zrd --sa-data-root /path/to/dataset_zrd_sa --model-dir /path/to/models_zrd --sa-model-dir /path/to/models_zrd_sa --lambda-gradient <weight>
 ```
+
+## 원통 속도 공동 학습과 표면 기울기 손실
+
+FATO(2RD)와 SA(2.5RD)는 기존처럼 독립된 데이터셋/모델 폴더를 사용합니다.
+각 영역의 U/V/W 모델 3개를 하나의 3채널 U-Net으로 통합했습니다.
+출력 순서는 `ur, utheta, uz`이며 기존 BatchNorm/일반 합성곱 블록을 유지합니다.
+
+기존 CFD 타깃 `u/Vi, v/Vi, w/Vi`를 같은 격자에서
+`ur=u*cos(theta)+v*sin(theta)`, `utheta=-u*sin(theta)+v*cos(theta)`, `uz=w`로 변환합니다.
+보간이나 성분별 추가 정규화는 없습니다. 기존 공통 `TARGET_SCALE=100`을 유지합니다.
+
+오차 `e=prediction-target`에 대해 `value_loss=mean(abs(e))`입니다.
+`z*=z/RD`, `r*=r/RD`를 사용하여 다음 6항 전체의 절댓값 평균을 계산합니다.
+
+```text
+Gs(e) = [[der/dz*, (der/dtheta - etheta)/r*],
+         [detheta/dz*, (detheta/dtheta + er)/r*],
+         [dez/dz*, dez/dtheta/r*]]
+gradient_loss = mean(abs(Gs(e)))
+total_loss = value_loss + lambda_gradient * gradient_loss
+```
+
+두 손실 모두 동일한 공통 target scale을 적용한 속도에서 계산합니다.
+Theta는 라디안, 주기 중앙차분입니다. z는 저장된 실제 좌표 간격으로 중앙차분하고
+경계에는 2차 단측차분을 사용합니다. 반지름 미분과 물리 방정식 잔차는 없습니다.
+
+Colab 설정 셀의 `EPOCHS`는 그대로 CLI `--epochs`에 전달됩니다.
+`LAMBDA_GRADIENT` 입력은 사용자가 결정하고 한 학습 실행 동안 고정됩니다.
+CLI에서도 `--lambda-gradient`는 필수이며 기본 최적값을 가정하지 않습니다.
+실행할 때마다 요청한 epoch 수만큼 학습합니다. 기존 모델이 있다는 이유로 건너뛰지 않습니다.
+매 epoch의 전체 train `total_loss`를 비교하여 best를 저장합니다.
+검증 데이터는 best 저장에 사용하지 않으며 별도 검증 일정도 없습니다.
+
+각 모델 폴더에 `rotor_unet_cyl2d_joint_best.pth`와 `joint_training_losses.csv`를 저장합니다.
+CSV는 `value_loss`, `gradient_loss`, `weighted_gradient_loss`, `total_loss`,
+고정 lambda, epoch, best 갱신 여부를 기록합니다. Checkpoint에도 최적 epoch와 손실을 저장합니다.
+기존 `rotor_unet_cyl2d_u/v/w.pth` 파일은 보존하지만 새 예측에는 사용할 수 없습니다.
+
+예측은 원통 성분을 직접 사용하고 `/100 * Vi`로 m/s를 복원합니다.
+NPZ의 원통 성분/속력/PNG/HTML과 FATO/SA 보기 기능을 유지합니다.
+기존 Cartesian NPZ 키는 원통→직교 역변환으로 제공합니다.
+평가 시 CFD만 직교→원통 변환하며 AI 출력은 다시 변환하지 않습니다.
+
+검증: `python -m unittest discover -s work_multirotor -p test_joint_velocity.py -v`

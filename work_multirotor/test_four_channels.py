@@ -21,7 +21,7 @@ class FourChannelTest(unittest.TestCase):
         self.assertAlmostEqual(float(array[2, 0, 0]), 1.0)
         np.testing.assert_allclose(array[3, 0], -2.0)
         np.testing.assert_allclose(array[3, -1], 3.0)
-        model = CylindricalUNet2D(base_channels=2)
+        model = CylindricalUNet2D(out_channels=1, base_channels=2)
         optimizer = torch.optim.Adam(model.parameters())
         inputs = torch.from_numpy(array[None])
         loss = model(inputs).square().mean()
@@ -40,7 +40,7 @@ class FourChannelTest(unittest.TestCase):
 
     def test_five_channel_checkpoint_rejected(self):
         with tempfile.TemporaryDirectory() as folder:
-            model = CylindricalUNet2D(in_channels=5, base_channels=2)
+            model = CylindricalUNet2D(in_channels=5, out_channels=1, base_channels=2)
             path = Path(folder) / 'rotor_unet_cyl2d_u.pth'
             # Validate the actual weights even when metadata is missing or incorrect.
             for metadata in ({}, {'in_channels': 4}, {'in_channels': 5}):
@@ -50,7 +50,7 @@ class FourChannelTest(unittest.TestCase):
 
     def test_old_four_channel_semantics_rejected(self):
         with tempfile.TemporaryDirectory() as folder:
-            model = CylindricalUNet2D(base_channels=2)
+            model = CylindricalUNet2D(out_channels=1, base_channels=2)
             torch.save(dict(state_dict=model.state_dict(), in_channels=4, base_channels=2),
                        Path(folder) / 'rotor_unet_cyl2d_u.pth')
             with self.assertRaisesRegex(ValueError, 'z/R_D checkpoint'):
@@ -62,7 +62,7 @@ class FourChannelTest(unittest.TestCase):
 
     def test_wrong_region_checkpoint_rejected(self):
         with tempfile.TemporaryDirectory() as folder:
-            model = CylindricalUNet2D(base_channels=2)
+            model = CylindricalUNet2D(out_channels=1, base_channels=2)
             checkpoint = dict(state_dict=model.state_dict(), in_channels=4,
                               base_channels=2, target_scale=100.0,
                               coordinate_system=COORDINATE_SYSTEM, input_channels=INPUT_CHANNELS)

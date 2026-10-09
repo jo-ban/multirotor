@@ -13,6 +13,7 @@ from data_utils_cylindrical import (
     load_case_input,
     make_input_surface,
 )
+from joint_checkpoint import load_joint_model
 from normalization import dimensional_velocity
 
 
@@ -35,6 +36,8 @@ def load_model(component, device, model_dir=None, expected_rd=None,
     path = MODEL_PATHS[component] if model_dir is None else Path(model_dir) / f"rotor_unet_cyl2d_{component}.pth"
     checkpoint = torch.load(path, map_location=device)
     validate_checkpoint(checkpoint, expected_rd, expected_radius_over_rd)
+    if checkpoint["state_dict"]["out_conv.weight"].shape[0] != 1:
+        raise ValueError("Legacy component loader requires one Cartesian channel; use load_joint_model for joint cylindrical weights")
     model = CylindricalUNet2D(
         in_channels=4,
         out_channels=1,
@@ -61,23 +64,18 @@ def evaluate_case(case_id, device, show_plot=True, data_root=DATA_ROOT, model_di
         for c in ("u", "v", "w")
     }
 
-    ai_nd = {}
+    model, scale = load_joint_model(device, model_dir, meta["disk_radius_m"], meta["radius_over_rd"])
     with torch.no_grad():
-        for component in ("u", "v", "w"):
-            model, scale = load_model(component, device, model_dir, meta["disk_radius_m"], meta["radius_over_rd"])
-            ai_nd[component] = model(inputs)[0, 0].cpu().numpy() / scale
-            del model
-            if torch.cuda.is_available():
-                torch.cuda.empty_cache()
-
+        ai_nd = model(inputs)[0].cpu().numpy() / scale
+    del model
     dl = meta["disk_loading"]
     cfd = {c: dimensional_velocity(cfd_nd[c], dl) for c in ("u", "v", "w")}
-    ai = {c: dimensional_velocity(ai_nd[c], dl) for c in ("u", "v", "w")}
     theta_rad = np.linspace(0, 2 * np.pi, meta["shape_ztheta"][1], endpoint=False)
     cfd_cyl = cartesian_to_cylindrical_velocity(cfd["u"], cfd["v"], cfd["w"], theta_rad)
-    ai_cyl = cartesian_to_cylindrical_velocity(ai["u"], ai["v"], ai["w"], theta_rad)
-    magnitude_cfd = np.sqrt(cfd["u"] ** 2 + cfd["v"] ** 2 + cfd["w"] ** 2)
-    magnitude_ai = np.sqrt(ai["u"] ** 2 + ai["v"] ** 2 + ai["w"] ** 2)
+    ai_cyl = {key: dimensional_velocity(ai_nd[i], dl)
+              for i, key in enumerate(("u_r", "u_theta", "u_z"))}
+    magnitude_cfd = np.sqrt(sum(field ** 2 for field in cfd_cyl.values()))
+    magnitude_ai = np.sqrt(sum(field ** 2 for field in ai_cyl.values()))
     from visualize_validation import export_html, build_static_figure
     from display_analysis import error_statistics, metrics_row, point_label
     cfd_fields = {**cfd_cyl, "magnitude": magnitude_cfd}

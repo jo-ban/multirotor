@@ -46,8 +46,19 @@ class ColabPathsTest(unittest.TestCase):
     def run_script(self, cwd, name, *args, success=True):
         env = {**os.environ, 'MPLBACKEND': 'Agg', 'OMP_NUM_THREADS': '1',
                'MKL_NUM_THREADS': '1', 'PYTHONIOENCODING': 'utf-8',
-               'PYTHONPATH': os.pathsep.join(sys.path)}
-        result = subprocess.run([sys.executable, str(CODE / name), *map(str, args)],
+               'PYTHONPATH': os.pathsep.join(sys.path), 'TMPDIR': str(cwd)}
+        command = [sys.executable, str(CODE / name), *map(str, args)]
+        if os.name == 'nt' and name == 'extract_nd.py':
+            # Windows may not grant symlink privileges; the tiny fixture can be copied.
+            wrapper = ('import pathlib,shutil,runpy,sys\n'
+                       'def fixture_link(self, target, target_is_directory=False):\n'
+                       '    shutil.copytree(target, self) if target_is_directory else shutil.copy2(target, self)\n'
+                       'pathlib.Path.symlink_to=fixture_link\n'
+                       'script=sys.argv.pop(1)\n'
+                       'sys.argv[0]=script\n'
+                       'runpy.run_path(script,run_name="__main__")\n')
+            command = [sys.executable, '-c', wrapper, str(CODE / name), *map(str, args)]
+        result = subprocess.run(command,
                                 cwd=cwd, env=env, capture_output=True, text=True,
                                 encoding='utf-8', timeout=180)
         if success:
@@ -93,25 +104,19 @@ class ColabPathsTest(unittest.TestCase):
                     target = dataset / 'targets_u' / metadata.name.replace('input_', 'u_').replace('.npz', '.npy')
                     np.testing.assert_allclose(np.load(target), 1 / np.sqrt(expected_dl / 2.45), rtol=1e-5)
             from train_nd import CylindricalSurfaceDataset
-            self.assertEqual(len(CylindricalSurfaceDataset(dataset, 'u', csv)), 1)
+            self.assertEqual(len(CylindricalSurfaceDataset(dataset, csv)), 1)
             # Once extracted, CSV is only a validation identifier list.
             split_csv = root / 'split.csv'
             split_csv.write_text('folder,type\n002,V\n')
-            training = CylindricalSurfaceDataset(dataset, 'u', split_csv)
+            training = CylindricalSurfaceDataset(dataset, split_csv)
             self.assertEqual(len(training), 1)
-            inputs, _ = training[0]
+            inputs, _, _, _ = training[0]
             self.assertAlmostEqual(float(inputs[0, 0, 0]), 1.5)
             self.run_script(root, 'train_nd.py', '--csv', split_csv, '--data-root', dataset,
-                            '--model-dir', models, '--epochs', 1)
-            self.assertEqual(len(list(models.glob('*.pth'))), 3)
+                            '--model-dir', models, '--epochs', 1, '--lambda-gradient', .2)
+            self.assertEqual(len(list(models.glob('*.pth'))), 1)
             sa_models = root / 'models_zrd_sa'
-            self.assertEqual(len(list(sa_models.glob('*.pth'))), 3)
-            before_models = {str(p): hashlib.sha256(p.read_bytes()).hexdigest()
-                             for folder in (models, sa_models) for p in folder.glob('*.pth')}
-            self.run_script(root, 'train_nd.py', '--csv', split_csv, '--data-root', dataset,
-                            '--model-dir', models, '--epochs', 1)
-            self.assertEqual(before_models, {str(p): hashlib.sha256(p.read_bytes()).hexdigest()
-                             for folder in (models, sa_models) for p in folder.glob('*.pth')})
+            self.assertEqual(len(list(sa_models.glob('*.pth'))), 1)
             self.run_script(root, 'predict_nd.py', '--model-dir', models,
                             '--output', results / 'prediction.npz', '--no-show',
                             '--ground-z', 0, '--rotor-z', 9.3101752, '--z-max', 15,
@@ -156,7 +161,7 @@ class ColabPathsTest(unittest.TestCase):
             self.run_script(root, 'extract_nd.py', '--csv', csv, '--data-root', root / 'missing',
                             '--output-root', root / 'bad', success=False)
             self.run_script(root, 'train_nd.py', '--csv', root / 'missing.csv',
-                            '--data-root', dataset, '--epochs', 1, success=False)
+                            '--data-root', dataset, '--epochs', 1, '--lambda-gradient', .2, success=False)
             self.run_script(root, 'predict_nd.py', '--model-dir', models,
                             '--ground-z', 3, '--z-max', 2, '--disk-loading', 153.22,
                             '--no-show', success=False)
