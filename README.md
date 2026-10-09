@@ -247,5 +247,3 @@ CSV는 `value_loss`, `gradient_loss`, `weighted_gradient_loss`, `total_loss`,
 NPZ의 원통 성분/속력/PNG/HTML과 FATO/SA 보기 기능을 유지합니다.
 기존 Cartesian NPZ 키는 원통→직교 역변환으로 제공합니다.
 평가 시 CFD만 직교→원통 변환하며 AI 출력은 다시 변환하지 않습니다.
-
-검증: `python -m unittest discover -s work_multirotor -p test_joint_velocity.py -v`

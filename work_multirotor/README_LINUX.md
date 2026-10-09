@@ -124,7 +124,7 @@ IDE는 필요 없지만 디스플레이 연결은 필요합니다. 텍스트 전
 PNG 저장은 --plot-output results/prediction.png를 명시할 때만 수행합니다.
 Colab 노트북은 --no-show와 --plot-output을 사용해 결과를 표시합니다.
 
-## 경로와 검증
+## 경로와 실행
 
 기본 경로는 rotor.sh가 있는 폴더 기준, 사용자가 지정한 상대경로는 현재 터미널 기준입니다.
 공백이 있는 경로는 따옴표로 감싸세요. 재실행하면 같은 이름의 결과는 덮어씁니다.
@@ -132,11 +132,8 @@ Colab 노트북은 --no-show와 --plot-output을 사용해 결과를 표시합�
 ```bash
 nohup bash rotor.sh train --epochs 100 --lambda-gradient <weight> > train.log 2>&1 &
 tail -f train.log
-bash rotor.sh test
 ```
 
-테스트는 합성 OpenFOAM 추출→학습→예측→평가, RD 고정 역산, V 분리, z 배열 방향과 커서 표시를 확인합니다.
-실제 연구 데이터 정확도나 Linux GUI 환경의 검증을 대신하지는 않습니다.
 입력 인터페이스만 바뀌었으므로 같은 RD/좌표/조건으로 추출된 z/R_D 데이터는 재사용 가능합니다.
 D=1 등 잘못된 치수로 추출했다면 새 폴더로 재추출·재학습해야 합니다.
 이전 s/R_D 또는 5채널 데이터·가중치는 호환되지 않습니다.

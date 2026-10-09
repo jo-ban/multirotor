@@ -12,7 +12,6 @@ Usage: bash rotor.sh COMMAND [OPTIONS]
   train       Run train_nd.py (joint ur/utheta/uz)
   evaluate    Run evaluate_error.py (validation cases)
   predict     Open interactive prediction plot with mouse velocity readout; save NPZ
-  test        Run synthetic OpenFOAM pipeline test
   help        Show this help
 Example: bash rotor.sh train --epochs 100 --batch-size 4 --lambda-gradient <weight>
 Example: bash rotor.sh extract --data-root /data/OpenFOAM
@@ -26,7 +25,7 @@ command="${1:-help}"
 if (( $# )); then shift; fi
 case "$command" in
     help|-h|--help) usage; exit 0 ;;
-    setup|check|extract|visualize|view3d|train|evaluate|predict|test) ;;
+    setup|check|extract|visualize|view3d|train|evaluate|predict) ;;
     *) echo "Unknown command: $command" >&2; usage >&2; exit 2 ;;
 esac
 if [[ "$command" == setup ]]; then
@@ -64,7 +63,4 @@ case "$command" in
         exec "$PY" "$ROOT/evaluate_error.py" --csv "$ROOT/cases.csv" --data-root "$ROOT/dataset_zrd" --model-dir "$ROOT/models_zrd" --output-dir "$ROOT/results/evaluate" --no-show "$@" ;;
     predict)
         exec "$PY" "$ROOT/predict_nd.py" --model-dir "$ROOT/models_zrd" --output "$ROOT/results/prediction_cylinder_r2RD.npz" "$@" ;;
-    test)
-        export OMP_NUM_THREADS=1 MKL_NUM_THREADS=1
-        exec "$PY" -m unittest discover -s "$ROOT" -p 'test_*.py' "$@" ;;
 esac
