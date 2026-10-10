@@ -17,6 +17,7 @@ from data_utils_cylindrical import (
     INPUT_CHANNELS,
     find_case_ids,
     validation_ids_from_frame,
+    case_ids_for_rows,
     load_case_input,
     make_input_surface,
 )
@@ -43,6 +44,9 @@ class CylindricalSurfaceDataset(Dataset):
         dataframe = pd.read_csv(csv_path, dtype={"folder": str})
         all_ids = find_case_ids(self.root)
         excluded = set(validation_ids_from_frame(self.root, dataframe))
+        if "type" in dataframe:
+            labels = dataframe["type"].astype(str).str.strip()
+            excluded.update(case_ids_for_rows(self.root, dataframe[labels == "-"]))
         self.case_ids = [case_id for case_id in all_ids if case_id not in excluded]
         if not self.case_ids:
             raise RuntimeError("학습용 케이스가 없습니다. extract_nd.py를 먼저 실행하세요.")
